@@ -10,6 +10,10 @@ from .tool_executor import ToolExecutor, get_tool_label
 
 logger = logging.getLogger(__name__)
 
+MAX_TOOL_TEXT_CHARS = 20000
+MAX_TOOL_IMAGES = 2
+MAX_IMAGE_BYTES = 200_000
+MAX_IMAGE_TOTAL_BYTES = 250_000
 SYSTEM_INSTRUCTIONS = """You are a neutral policy research assistant specializing in U.S. federal regulatory activity.
 
 CRITICAL RULES:
@@ -30,6 +34,8 @@ READING FULL DOCUMENT CONTENT:
 - This allows you to understand and summarize the actual content, not just metadata
 - Read the full content when the user asks for details, summaries, or analysis of specific documents
 - Use fetch_url_content as a fallback for any government URL
+- Some tools may include extracted PDF images as separate inputs. Use them when relevant.
+- Use search_pdf_memory to retrieve previously indexed PDF content for this session when needed.
 
 Format your response clearly with:
 - A summary of what you found
@@ -205,16 +211,190 @@ TOOLS = [
             },
             "required": ["url"]
         }
+    },
+    {
+        "type": "function",
+        "name": "search_pdf_memory",
+        "description": "Search indexed PDF content stored in memory for this session. Use this to recall details from PDFs already processed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query for the PDF memory."
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Number of matches to return.",
+                    "default": 5
+                }
+            },
+            "required": ["query"]
+        }
     }
 ]
 
 
 class OpenAIService:
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None):
         settings = get_settings()
         self.client = OpenAI(api_key=settings.openai_api_key)
         self.model = settings.openai_model
-        self.tool_executor = ToolExecutor()
+        self.tool_executor = ToolExecutor(session_id=session_id)
+
+    def _truncate_for_model(self, text: str) -> tuple[str, bool]:
+        if not text or len(text) <= MAX_TOOL_TEXT_CHARS:
+            return text, False
+
+        truncated = text[:MAX_TOOL_TEXT_CHARS]
+        last_period = truncated.rfind(".")
+        if last_period > MAX_TOOL_TEXT_CHARS * 0.8:
+            truncated = truncated[:last_period + 1]
+        truncated += "\n\n[Content truncated for model context...]"
+        return truncated, True
+
+    def _shorten_label_value(self, value: str, max_len: int = 60) -> str:
+        if not value:
+            return ""
+        if len(value) <= max_len:
+            return value
+        return value[: max_len - 3] + "..."
+
+    def _format_pdf_search_label(self, query: str, preview: Optional[dict]) -> str:
+        base = f"Search PDF memory: {self._shorten_label_value(query, 50)}"
+        if not preview:
+            return base
+        documents = preview.get("documents") or []
+        if not documents:
+            return base
+        first_doc = documents[0] or {}
+        doc_label = first_doc.get("doc_key") or first_doc.get("pdf_url") or ""
+        doc_label = self._shorten_label_value(doc_label, 50)
+        if not doc_label:
+            return base
+        if len(documents) > 1:
+            return f"{base} (top: {doc_label} +{len(documents) - 1})"
+        return f"{base} (top: {doc_label})"
+
+    def _prepare_tool_output(self, tool_name: str, result: dict) -> tuple[dict, Optional[dict]]:
+        images = result.get("images")
+        safe_result = {k: v for k, v in result.items() if k != "images"}
+
+        if "full_text" in safe_result and safe_result.get("full_text"):
+            original_len = len(safe_result["full_text"])
+            truncated, did_truncate = self._truncate_for_model(safe_result["full_text"])
+            if did_truncate:
+                safe_result["full_text"] = truncated
+                safe_result["full_text_length"] = original_len
+                safe_result["full_text_truncated"] = True
+                logger.info(
+                    "Truncated full_text for %s from %s chars to %s chars",
+                    tool_name,
+                    original_len,
+                    len(truncated),
+                )
+
+        if "text" in safe_result and safe_result.get("text"):
+            original_len = len(safe_result["text"])
+            truncated, did_truncate = self._truncate_for_model(safe_result["text"])
+            if did_truncate:
+                safe_result["text"] = truncated
+                safe_result["text_length"] = original_len
+                safe_result["text_truncated"] = True
+                logger.info(
+                    "Truncated text for %s from %s chars to %s chars",
+                    tool_name,
+                    original_len,
+                    len(truncated),
+                )
+
+        if not images:
+            return safe_result, None
+
+        image_inputs = []
+        image_meta = []
+        source_label = (
+            result.get("url")
+            or result.get("document_id")
+            or result.get("package_id")
+            or tool_name
+        )
+
+        skipped_images = 0
+        total_image_bytes = 0
+        for image in images:
+            if len(image_inputs) >= MAX_TOOL_IMAGES:
+                skipped_images += 1
+                continue
+            byte_size = image.get("byte_size") or 0
+            if byte_size and byte_size > MAX_IMAGE_BYTES:
+                skipped_images += 1
+                continue
+            if byte_size and total_image_bytes + byte_size > MAX_IMAGE_TOTAL_BYTES:
+                skipped_images += 1
+                continue
+            data = image.get("data_base64")
+            mime_type = image.get("mime_type", "image/png")
+            if data:
+                image_inputs.append(
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{mime_type};base64,{data}",
+                    }
+                )
+                total_image_bytes += byte_size
+            image_meta.append(
+                {
+                    "id": image.get("id"),
+                    "page": image.get("page"),
+                    "source": image.get("source"),
+                    "mime_type": mime_type,
+                    "width": image.get("width"),
+                    "height": image.get("height"),
+                    "byte_size": image.get("byte_size"),
+                }
+            )
+
+        message_item = None
+        if image_inputs:
+            lines = [f"Images extracted from {source_label}:"]
+            for meta in image_meta:
+                label = meta.get("id") or "image"
+                details = []
+                if meta.get("page"):
+                    details.append(f"page {meta['page']}")
+                if meta.get("source"):
+                    details.append(str(meta["source"]))
+                if details:
+                    label = f"{label} ({', '.join(details)})"
+                lines.append(f"- {label}")
+            image_inputs.insert(0, {"type": "input_text", "text": "\n".join(lines)})
+            message_item = {
+                "type": "message",
+                "role": "user",
+                "content": image_inputs,
+            }
+
+        if image_meta:
+            safe_result["image_count"] = len(image_meta)
+            safe_result["image_metadata"] = image_meta
+            if skipped_images:
+                safe_result["images_skipped_for_model"] = skipped_images
+            logger.info(
+                "Prepared %s image(s) for model input from %s",
+                len(image_meta),
+                source_label,
+            )
+        elif skipped_images:
+            safe_result["image_count"] = 0
+            safe_result["images_skipped_for_model"] = skipped_images
+            logger.info(
+                "Skipped %s image(s) for model input from %s",
+                skipped_images,
+                source_label,
+            )
+
+        return safe_result, message_item
 
     def _format_user_message(self, message: str, mode: str, days: int) -> str:
         mode_context = {
@@ -233,13 +413,14 @@ Please search for relevant information and provide a comprehensive answer with c
 
     def _get_available_tools(self, mode: str) -> list[dict]:
         fetch_url_tool = [t for t in TOOLS if t["name"] == "fetch_url_content"]
+        memory_tool = [t for t in TOOLS if t["name"] == "search_pdf_memory"]
 
         if mode == "regulations":
             regs_tools = [t for t in TOOLS if t["name"].startswith("regs_")]
-            return regs_tools + fetch_url_tool
+            return regs_tools + fetch_url_tool + memory_tool
         elif mode == "govinfo":
             govinfo_tools = [t for t in TOOLS if t["name"].startswith("govinfo_")]
-            return govinfo_tools + fetch_url_tool
+            return govinfo_tools + fetch_url_tool + memory_tool
         else:
             return TOOLS
 
@@ -248,19 +429,21 @@ Please search for relevant information and provide a comprehensive answer with c
         message: str,
         mode: str,
         days: int,
+        model: Optional[str] = None,
         previous_response_id: Optional[str] = None,
-    ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str]:
+    ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str, str]:
         self.tool_executor.clear_sources()
         steps: list[Step] = []
         step_counter = 0
 
+        model_to_use = model or self.model
         formatted_message = self._format_user_message(message, mode, days)
         available_tools = self._get_available_tools(mode)
 
         input_messages = [{"role": "user", "content": formatted_message}]
 
         response = self.client.responses.create(
-            model=self.model,
+            model=model_to_use,
             instructions=SYSTEM_INSTRUCTIONS,
             input=input_messages,
             tools=available_tools,
@@ -300,18 +483,26 @@ Please search for relevant information and provide a comprehensive answer with c
                 steps.append(step)
 
                 result, preview = await self.tool_executor.execute_tool(tool_name, args)
+                safe_result, image_message = self._prepare_tool_output(tool_name, result)
 
-                step.status = "done" if "error" not in result else "error"
+                step.status = "done" if "error" not in safe_result else "error"
                 step.result_preview = preview
+                if tool_name == "search_pdf_memory":
+                    step.label = self._format_pdf_search_label(
+                        args.get("query", ""),
+                        preview,
+                    )
 
                 function_outputs.append({
                     "type": "function_call_output",
                     "call_id": call.call_id,
-                    "output": json.dumps(result),
+                    "output": json.dumps(safe_result),
                 })
+                if image_message:
+                    function_outputs.append(image_message)
 
             response = self.client.responses.create(
-                model=self.model,
+                model=model_to_use,
                 instructions=SYSTEM_INSTRUCTIONS,
                 input=function_outputs,
                 tools=available_tools,
@@ -330,25 +521,27 @@ Please search for relevant information and provide a comprehensive answer with c
 
         sources = self.tool_executor.get_collected_sources()
 
-        return answer_text, sources, reasoning_summary, steps, current_response_id
+        return answer_text, sources, reasoning_summary, steps, current_response_id, model_to_use
 
     async def chat_stream(
         self,
         message: str,
         mode: str,
         days: int,
+        model: Optional[str] = None,
         previous_response_id: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         self.tool_executor.clear_sources()
         step_counter = 0
 
+        model_to_use = model or self.model
         formatted_message = self._format_user_message(message, mode, days)
         available_tools = self._get_available_tools(mode)
 
         input_messages = [{"role": "user", "content": formatted_message}]
 
         response = self.client.responses.create(
-            model=self.model,
+            model=model_to_use,
             instructions=SYSTEM_INSTRUCTIONS,
             input=input_messages,
             tools=available_tools,
@@ -389,24 +582,35 @@ Please search for relevant information and provide a comprehensive answer with c
                 }
 
                 result, preview = await self.tool_executor.execute_tool(tool_name, args)
+                safe_result, image_message = self._prepare_tool_output(tool_name, result)
+
+                label_override = None
+                if tool_name == "search_pdf_memory":
+                    label_override = self._format_pdf_search_label(
+                        args.get("query", ""),
+                        preview,
+                    )
 
                 yield {
                     "event": "step",
                     "data": {
                         "step_id": step_id,
-                        "status": "done" if "error" not in result else "error",
+                        "status": "done" if "error" not in safe_result else "error",
                         "result_preview": preview,
+                        "label": label_override,
                     }
                 }
 
                 function_outputs.append({
                     "type": "function_call_output",
                     "call_id": call.call_id,
-                    "output": json.dumps(result),
+                    "output": json.dumps(safe_result),
                 })
+                if image_message:
+                    function_outputs.append(image_message)
 
             response = self.client.responses.create(
-                model=self.model,
+                model=model_to_use,
                 instructions=SYSTEM_INSTRUCTIONS,
                 input=function_outputs,
                 tools=available_tools,
@@ -439,5 +643,6 @@ Please search for relevant information and provide a comprehensive answer with c
                 "answer_text": final_text,
                 "sources": [s.model_dump() for s in sources],
                 "response_id": current_response_id,
+                "model": model_to_use,
             }
         }

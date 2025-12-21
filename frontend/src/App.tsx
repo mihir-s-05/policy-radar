@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useSession } from "./hooks/useSession";
 import { useChat } from "./hooks/useChat";
-import { getSessionMessages, updateMessage } from "./api/client";
+import { getSessionMessages, updateMessage, getConfig } from "./api/client";
 import { ChatInput, ChatSidebar, MessageList, WorkLog, SourceCards } from "./components";
 import type { Message, SearchMode, SourceItem } from "./types";
+import { PanelLeftClose, PanelLeft, PanelRightClose, PanelRight } from "lucide-react";
+import { Button } from "./components/ui/Button";
 
 function App() {
   const {
@@ -31,8 +33,22 @@ function App() {
 
   const [mode, setMode] = useState<SearchMode>("both");
   const [days, setDays] = useState(30);
+  const [model, setModel] = useState("gpt-5.2");
+  const [availableModels, setAvailableModels] = useState<string[]>(["gpt-5.2", "gpt-5.1", "gpt-5", "o3", "gpt-5-mini"]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const isNewSessionRef = useRef(false);
+
+  useEffect(() => {
+    getConfig()
+      .then((config) => {
+        setAvailableModels(config.available_models);
+        setModel(config.model);
+      })
+      .catch((err) => console.error("Failed to load config:", err));
+  }, []);
 
   const isChatBusy = isLoading || historyLoading || sessionLoading;
 
@@ -53,13 +69,9 @@ function App() {
     return aggregated;
   };
 
-  const handleNewChat = async () => {
+  const handleNewChat = () => {
     clearMessages();
-    try {
-      await createNewSession();
-    } catch (err) {
-      console.error("Failed to create new session:", err);
-    }
+    selectSession("");
   };
 
   const handleSelectSession = (nextSessionId: string) => {
@@ -100,16 +112,27 @@ function App() {
     }
   };
 
-  const handleSendMessage = async (message: string, nextMode: SearchMode, nextDays: number) => {
-    await sendMessage(message, nextMode, nextDays);
-    if (sessionId) {
-      await loadHistoryForSession(sessionId, false);
+  const handleSendMessage = async (message: string, nextMode: SearchMode, nextDays: number, nextModel: string) => {
+    let currentSessionId = sessionId;
+
+    if (!currentSessionId) {
+      try {
+        isNewSessionRef.current = true;
+        currentSessionId = await createNewSession();
+      } catch (err) {
+        isNewSessionRef.current = false;
+        console.error("Failed to create session:", err);
+        return;
+      }
     }
+
+    await sendMessage(message, nextMode, nextDays, nextModel, currentSessionId);
+    isNewSessionRef.current = false;
     await refreshSessions().catch(() => undefined);
   };
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || isNewSessionRef.current) return;
 
     const loadHistory = async () => {
       await loadHistoryForSession(sessionId);
@@ -135,7 +158,7 @@ function App() {
     return (
       <div className="app-loading">
         <div className="loading-spinner" />
-        <p>Initializing session...</p>
+        <p>Loading...</p>
       </div>
     );
   }
@@ -152,7 +175,12 @@ function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background font-sans text-foreground">
-      <main className="grid flex-1 grid-cols-1 overflow-hidden p-4 gap-4 md:grid-cols-[280px_1fr] lg:grid-cols-[280px_1fr_340px]">
+      <main
+        className="grid flex-1 overflow-hidden p-4 gap-4 transition-all duration-300"
+        style={{
+          gridTemplateColumns: `${leftSidebarCollapsed ? "48px" : "280px"} 1fr ${rightSidebarCollapsed ? "48px" : "340px"}`,
+        }}
+      >
         <ChatSidebar
           sessions={sessions}
           activeSessionId={sessionId}
@@ -161,6 +189,8 @@ function App() {
           onSelect={handleSelectSession}
           onNewChat={handleNewChat}
           onDeleteSession={removeSession}
+          isCollapsed={leftSidebarCollapsed}
+          onToggleCollapse={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
         />
         <div className="relative flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
           <MessageList
@@ -184,18 +214,39 @@ function App() {
             isLoading={isChatBusy}
             mode={mode}
             days={days}
+            model={model}
+            availableModels={availableModels}
             onModeChange={setMode}
             onDaysChange={setDays}
+            onModelChange={setModel}
           />
         </div>
 
-        <aside className="hidden flex-col gap-4 overflow-y-auto rounded-xl border bg-card p-4 shadow-sm lg:flex">
-          <div className="flex flex-col gap-4">
-            <WorkLog steps={currentSteps} reasoningSummary={reasoningSummary} />
+        <aside className="hidden flex-col gap-4 overflow-hidden rounded-xl border bg-card shadow-sm lg:flex transition-all duration-300">
+          <div className="flex items-center justify-between border-b bg-card px-4 py-3">
+            {!rightSidebarCollapsed && (
+              <h3 className="text-sm font-semibold">Details</h3>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
+              aria-label={rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {rightSidebarCollapsed ? (
+                <PanelLeft className="h-4 w-4" />
+              ) : (
+                <PanelRightClose className="h-4 w-4" />
+              )}
+            </Button>
           </div>
-          <div className="flex flex-col gap-4">
-            <SourceCards sources={currentSources} />
-          </div>
+          {!rightSidebarCollapsed && (
+            <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+              <WorkLog steps={currentSteps} reasoningSummary={reasoningSummary} />
+              <SourceCards sources={currentSources} />
+            </div>
+          )}
         </aside>
       </main>
     </div>

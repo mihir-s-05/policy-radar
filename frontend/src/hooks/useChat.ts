@@ -15,8 +15,9 @@ export function useChat({ sessionId }: UseChatOptions) {
   const [reasoningSummary, setReasoningSummary] = useState<string | null>(null);
 
   const sendMessage = useCallback(
-    async (content: string, mode: SearchMode, days: number) => {
-      if (!sessionId || !content.trim()) return;
+    async (content: string, mode: SearchMode, days: number, model?: string, overrideSessionId?: string) => {
+      const effectiveSessionId = overrideSessionId || sessionId;
+      if (!effectiveSessionId || !content.trim()) return;
 
       setError(null);
       setIsLoading(true);
@@ -47,12 +48,14 @@ export function useChat({ sessionId }: UseChatOptions) {
         let finalSources: SourceItem[] = [];
         let finalSteps: Step[] = [];
         let finalReasoning: string | null = null;
+        let finalModel: string | undefined = model;
 
         for await (const event of chatStream({
-          session_id: sessionId,
+          session_id: effectiveSessionId,
           message: content,
           mode,
           days,
+          model,
         })) {
           switch (event.type) {
             case "step": {
@@ -62,7 +65,13 @@ export function useChat({ sessionId }: UseChatOptions) {
                 if (existing) {
                   return prev.map((s) =>
                     s.step_id === stepData.step_id
-                      ? { ...s, ...stepData }
+                      ? {
+                          ...s,
+                          ...stepData,
+                          label: stepData.label ?? s.label,
+                          tool_name: stepData.tool_name ?? s.tool_name,
+                          args: stepData.args ?? s.args,
+                        }
                       : s
                   );
                 }
@@ -98,6 +107,7 @@ export function useChat({ sessionId }: UseChatOptions) {
             case "done":
               finalContent = event.data.answer_text;
               finalSources = event.data.sources;
+              finalModel = event.data.model;
               setCurrentSources(finalSources);
               break;
 
@@ -121,6 +131,7 @@ export function useChat({ sessionId }: UseChatOptions) {
                   steps: finalSteps,
                   reasoning_summary: finalReasoning || undefined,
                   isStreaming: false,
+                  model: finalModel,
                 }
               : m
           )
@@ -130,10 +141,11 @@ export function useChat({ sessionId }: UseChatOptions) {
 
         try {
           const response = await chat({
-            session_id: sessionId,
+            session_id: effectiveSessionId,
             message: content,
             mode,
             days,
+            model,
           });
 
           setMessages((prev) =>
@@ -146,6 +158,7 @@ export function useChat({ sessionId }: UseChatOptions) {
                     steps: response.steps,
                     reasoning_summary: response.reasoning_summary,
                     isStreaming: false,
+                    model: response.model,
                   }
                 : m
             )

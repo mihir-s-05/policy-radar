@@ -12,12 +12,15 @@ import {
 } from "./ui/Select";
 
 interface ChatInputProps {
-  onSend: (message: string, mode: SearchMode, days: number) => void;
+  onSend: (message: string, mode: SearchMode, days: number, model: string) => void;
   isLoading: boolean;
   mode: SearchMode;
   days: number;
+  model: string;
+  availableModels: string[];
   onModeChange: (mode: SearchMode) => void;
   onDaysChange: (days: number) => void;
+  onModelChange: (model: string) => void;
 }
 
 export function ChatInput({
@@ -25,15 +28,18 @@ export function ChatInput({
   isLoading,
   mode,
   days,
+  model,
+  availableModels,
   onModeChange,
   onDaysChange,
+  onModelChange,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
 
   const submitMessage = () => {
     const trimmed = message.trim();
     if (!trimmed || isLoading) return;
-    onSend(trimmed, mode, days);
+    onSend(trimmed, mode, days, model);
     setMessage("");
   };
 
@@ -117,6 +123,28 @@ export function ChatInput({
                 <SelectItem value="30">30d</SelectItem>
                 <SelectItem value="60">60d</SelectItem>
                 <SelectItem value="90">90d</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="h-4 w-px bg-border" />
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Model
+            </span>
+            <Select
+              value={model}
+              onValueChange={onModelChange}
+              disabled={isLoading}
+            >
+              <SelectTrigger className="h-8 w-[120px] text-xs">
+                <SelectValue placeholder="Select Model" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableModels.map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {m}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

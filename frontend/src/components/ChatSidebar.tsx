@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Trash2, MessageSquare, Calendar, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, MessageSquare, Calendar, AlertTriangle, PanelLeftClose, PanelLeft } from "lucide-react";
 import type { SessionInfo } from "../types";
 import { Button } from "./ui/Button";
 import {
@@ -21,6 +21,8 @@ interface ChatSidebarProps {
   onSelect: (sessionId: string) => void;
   onNewChat: () => void;
   onDeleteSession: (sessionId: string) => void;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
 function formatTitle(session: SessionInfo): string {
@@ -30,23 +32,19 @@ function formatTitle(session: SessionInfo): string {
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "";
-  try {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
 
-    if (days === 0) return "Today";
-    if (days === 1) return "Yesterday";
-    if (days < 7) return date.toLocaleDateString("en-US", { weekday: "short" });
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return date.toLocaleDateString("en-US", { weekday: "short" });
 
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return "";
-  }
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 export function ChatSidebar({
@@ -57,6 +55,8 @@ export function ChatSidebar({
   onSelect,
   onNewChat,
   onDeleteSession,
+  isCollapsed,
+  onToggleCollapse,
 }: ChatSidebarProps) {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
@@ -72,13 +72,73 @@ export function ChatSidebar({
     }
   };
 
+  if (isCollapsed) {
+    return (
+      <>
+        <aside className="bg-metal-glass flex flex-col items-center gap-2 overflow-hidden rounded-xl border border-zinc-800/50 text-card-foreground shadow-2xl py-3 transition-all duration-300">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onToggleCollapse}
+            aria-label="Expand sidebar"
+          >
+            <PanelLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            onClick={onNewChat}
+            disabled={isBusy}
+            variant="chrome"
+            size="icon"
+            className="h-8 w-8"
+            aria-label="New Chat"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+          <div className="mt-2 flex flex-col gap-1">
+            {sessions.slice(0, 5).map((session) => {
+              const isActive = session.session_id === activeSessionId;
+              return (
+                <Button
+                  key={session.session_id}
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-8 w-8",
+                    isActive && "bg-accent text-accent-foreground"
+                  )}
+                  onClick={() => onSelect(session.session_id)}
+                  disabled={isBusy}
+                  aria-label={formatTitle(session)}
+                >
+                  <MessageSquare className="h-4 w-4" />
+                </Button>
+              );
+            })}
+          </div>
+        </aside>
+      </>
+    );
+  }
+
   return (
     <>
-      <aside className="bg-metal-glass flex flex-col gap-4 overflow-hidden rounded-xl border border-zinc-800/50 text-card-foreground shadow-2xl">
+      <aside className="bg-metal-glass flex flex-col gap-4 overflow-hidden rounded-xl border border-zinc-800/50 text-card-foreground shadow-2xl transition-all duration-300">
         <div className="flex flex-col gap-4 border-b border-white/5 p-4">
-          <h3 className="text-embossed text-lg font-bold leading-none tracking-tight">
-            Policy Radar
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-embossed text-lg font-bold leading-none tracking-tight">
+              Policy Radar
+            </h3>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onToggleCollapse}
+              aria-label="Collapse sidebar"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </Button>
+          </div>
           <Button
             onClick={onNewChat}
             disabled={isBusy}
@@ -178,4 +238,3 @@ export function ChatSidebar({
     </>
   );
 }
-

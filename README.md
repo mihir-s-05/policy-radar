@@ -10,6 +10,8 @@ A chatbot for exploring recent U.S. federal regulatory activity using official g
 - **Source cards** with direct links to official documents
 - **Streaming responses** for real-time feedback
 - **Configurable search** by source and time window
+- **PDF extraction + images** from Regulations.gov and GovInfo documents
+- **Session RAG memory** for PDFs with persistent ChromaDB storage
 
 ## Prerequisites
 
@@ -30,7 +32,9 @@ export OPENAI_API_KEY=your_openai_api_key
 
 # Optional
 export OPENAI_MODEL=gpt-5.2  # Default: gpt-5.2
+export EMBEDDING_MODEL=text-embedding-3-small  # Default: text-embedding-3-small
 export PORT=8000            # Default: 8000
+export RAG_PERSIST_DIR=./chroma  # Default: ./chroma
 ```
 
 On Windows (PowerShell):
@@ -88,9 +92,24 @@ Create a `.env` file in the `backend` directory:
 ```env
 GOV_API_KEY=your_key_here
 OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4o
+OPENAI_MODEL=gpt-5.2
+EMBEDDING_MODEL=text-embedding-3-small
 PORT=8000
+
+# RAG / PDF Memory
+RAG_PERSIST_DIR=./chroma
+RAG_COLLECTION=pdf_memory
+RAG_CHUNK_SIZE=1200
+RAG_CHUNK_OVERLAP=200
+RAG_MAX_CHUNKS=500
+RAG_TOP_K=5
 ```
+
+### PDF Memory (RAG)
+
+- PDF text is chunked and embedded per session, then stored in ChromaDB for retrieval
+- The assistant can search indexed PDF content with the `search_pdf_memory` tool
+- Persistent storage lives under `RAG_PERSIST_DIR` and survives restarts
 
 ## Example Prompts
 
@@ -150,6 +169,16 @@ The government APIs have rate limits:
 - Check your OpenAI account has sufficient credits
 - Ensure the model specified in `OPENAI_MODEL` is available to your account
 
+### PDF Extraction Issues
+
+- PDF text extraction uses `pdfplumber` first, then falls back to `pypdf`
+- PDF image extraction uses `PyMuPDF`
+- There is no OCR; scanned PDFs without embedded text may yield limited results
+
+### Regulations.gov 403s
+
+- Some pages occasionally return `403` on first request; the backend retries with browser-like headers and falls back to the API-provided file formats
+
 ### Connection Errors
 
 1. Make sure both backend and frontend are running
@@ -163,9 +192,9 @@ policy_chatbotv2/
 |-- backend/
 |   |-- app/
 |   |   |-- api/          # FastAPI routes
-|   |   |-- clients/      # Government API clients
+|   |   |-- clients/      # Government API clients + PDF utilities
 |   |   |-- models/       # Pydantic schemas & database
-|   |   |-- services/     # OpenAI service & tool execution
+|   |   |-- services/     # OpenAI service, tool execution, PDF memory
 |   |   |-- config.py     # Settings from env vars
 |   |   |-- main.py       # FastAPI app
 |   |   `-- __init__.py
@@ -194,6 +223,7 @@ policy_chatbotv2/
 - Keys are NEVER exposed to the frontend bundle
 - All API calls to government services are made from the backend
 - SQLite database stores session data locally
+- ChromaDB stores PDF embeddings locally under `RAG_PERSIST_DIR`
 
 ## License
 

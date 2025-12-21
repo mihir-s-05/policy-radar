@@ -7,6 +7,55 @@ import { Textarea } from "./ui/Textarea";
 import type { Message } from "../types";
 import { cn } from "../lib/utils";
 
+function StreamingText({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  if (isStreaming && !content) {
+    return (
+      <div className="typing-indicator flex items-center gap-1 py-2">
+        <span />
+        <span />
+        <span />
+      </div>
+    );
+  }
+
+  return (
+    <div className="streaming-text relative">
+      <div
+        className="prose prose-invert max-w-none hover:prose-a:text-blue-400"
+        style={{ fontFamily: "'Cormorant Garamond', Georgia, serif" }}
+      >
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a: ({ href, children }) => (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline underline-offset-4 hover:text-accent-foreground"
+              >
+                {children}
+              </a>
+            ),
+            p: ({ children }) => (
+              <p className="mb-2 last:mb-0">{children}</p>
+            ),
+            ul: ({ children }) => (
+              <ul className="ml-4 list-disc space-y-1 mb-2">{children}</ul>
+            ),
+            ol: ({ children }) => (
+              <ol className="ml-4 list-decimal space-y-1 mb-2">{children}</ol>
+            )
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+        {isStreaming && <span className="streaming-cursor" />}
+      </div>
+    </div>
+  );
+}
+
 interface MessageListProps {
   messages: Message[];
   isLoading?: boolean;
@@ -131,7 +180,7 @@ export function MessageList({
           <div
             key={message.id}
             className={cn(
-              "flex w-full max-w-3xl gap-4 md:gap-6",
+              "flex w-full max-w-3xl gap-4 md:gap-6 message-bubble",
               isUser ? "ml-auto flex-row-reverse" : "mr-auto"
             )}
           >
@@ -199,39 +248,46 @@ export function MessageList({
                 ) : (
                   <div className="break-words text-sm leading-relaxed">
                     {message.role === "assistant" ? (
-                      <div className="prose prose-invert max-w-none hover:prose-a:text-blue-400">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            a: ({ href, children }) => (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-medium underline underline-offset-4 hover:text-accent-foreground"
-                              >
-                                {children}
-                              </a>
-                            ),
-                            p: ({ children }) => (
-                              <p className="mb-2 last:mb-0">{children}</p>
-                            ),
-                            ul: ({ children }) => (
-                              <ul className="ml-4 list-disc space-y-1 mb-2">{children}</ul>
-                            ),
-                            ol: ({ children }) => (
-                              <ol className="ml-4 list-decimal space-y-1 mb-2">{children}</ol>
-                            )
-                          }}
+                      message.isStreaming ? (
+                        <StreamingText
+                          content={message.content}
+                          isStreaming={true}
+                        />
+                      ) : (
+                        <div
+                          className="prose prose-invert max-w-none hover:prose-a:text-blue-400"
+                          style={{ fontFamily: "'Cormorant Garamond', Georgia, serif" }}
                         >
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children }) => (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-medium underline underline-offset-4 hover:text-accent-foreground"
+                                >
+                                  {children}
+                                </a>
+                              ),
+                              p: ({ children }) => (
+                                <p className="mb-2 last:mb-0">{children}</p>
+                              ),
+                              ul: ({ children }) => (
+                                <ul className="ml-4 list-disc space-y-1 mb-2">{children}</ul>
+                              ),
+                              ol: ({ children }) => (
+                                <ol className="ml-4 list-decimal space-y-1 mb-2">{children}</ol>
+                              )
+                            }}
+                          >
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+                      )
                     ) : (
                       <div className="whitespace-pre-wrap">{message.content}</div>
-                    )}
-                    {message.isStreaming && !message.content && (
-                      <span className="ml-1 animate-pulse">...</span>
                     )}
                   </div>
                 )}
@@ -247,6 +303,12 @@ export function MessageList({
                 >
                   Edit
                 </Button>
+              )}
+
+              {!isUser && message.model && !message.isStreaming && (
+                <span className="mt-1 text-[10px] text-muted-foreground">
+                  {message.model}
+                </span>
               )}
             </div>
           </div>

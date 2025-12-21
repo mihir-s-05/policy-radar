@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     message: str
     mode: Literal["regulations", "govinfo", "both"] = "both"
     days: int = Field(default=30, ge=7, le=90)
+    model: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -38,6 +39,7 @@ class ChatResponse(BaseModel):
     sources: list[SourceItem] = Field(default_factory=list)
     reasoning_summary: Optional[str] = None
     steps: list[Step] = Field(default_factory=list)
+    model: Optional[str] = None
 
 
 class SessionResponse(BaseModel):
@@ -97,6 +99,7 @@ class UpdateMessageResponse(BaseModel):
 
 class ConfigResponse(BaseModel):
     model: str
+    available_models: list[str] = Field(default_factory=list)
 
 
 class StepEvent(BaseModel):

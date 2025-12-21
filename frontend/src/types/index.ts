@@ -30,6 +30,7 @@ export interface ChatRequest {
   message: string;
   mode: SearchMode;
   days: number;
+  model?: string;
 }
 
 export interface ChatResponse {
@@ -37,6 +38,7 @@ export interface ChatResponse {
   sources: SourceItem[];
   reasoning_summary?: string;
   steps: Step[];
+  model?: string;
 }
 
 export interface SessionResponse {
@@ -91,6 +93,7 @@ export interface UpdateMessageResponse {
 
 export interface ConfigResponse {
   model: string;
+  available_models: string[];
 }
 
 export interface StepEvent {
@@ -114,6 +117,7 @@ export interface DoneEvent {
   answer_text: string;
   sources: SourceItem[];
   response_id: string;
+  model?: string;
 }
 
 export interface ErrorEvent {
@@ -133,6 +137,7 @@ export interface Message {
   steps?: Step[];
   reasoning_summary?: string;
   isStreaming?: boolean;
+  model?: string;
 }
 
 export interface ChatState {

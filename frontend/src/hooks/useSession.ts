@@ -17,8 +17,13 @@ export function useSession() {
   }, []);
 
   const selectSession = useCallback((nextSessionId: string) => {
-    setSessionId(nextSessionId);
-    localStorage.setItem(SESSION_KEY, nextSessionId);
+    if (nextSessionId) {
+      setSessionId(nextSessionId);
+      localStorage.setItem(SESSION_KEY, nextSessionId);
+    } else {
+      setSessionId(null);
+      localStorage.removeItem(SESSION_KEY);
+    }
   }, []);
 
   const createNewSession = useCallback(async () => {
@@ -46,29 +51,13 @@ export function useSession() {
     setError(null);
 
     try {
-      const storedSessionId = localStorage.getItem(SESSION_KEY);
-      const existingSessions = await refreshSessions();
-      const hasStored =
-        storedSessionId &&
-        existingSessions.some((s) => s.session_id === storedSessionId);
-
-      if (hasStored) {
-        setSessionId(storedSessionId);
-        return;
-      }
-
-      if (existingSessions.length > 0) {
-        selectSession(existingSessions[0].session_id);
-        return;
-      }
-
-      await createNewSession();
+      await refreshSessions();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create session");
+      setError(e instanceof Error ? e.message : "Failed to load sessions");
     } finally {
       setIsLoading(false);
     }
-  }, [createNewSession, refreshSessions, selectSession]);
+  }, [refreshSessions]);
 
   useEffect(() => {
     initSession();

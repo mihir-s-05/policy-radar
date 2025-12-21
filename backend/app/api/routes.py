@@ -29,6 +29,7 @@ from ..models.database import (
     update_message_content,
 )
 from ..services.openai_service import OpenAIService
+from ..services.pdf_memory import get_pdf_memory_store
 from ..clients.base import RateLimitError, APIError
 from ..clients.web_fetcher import WebFetcher
 from ..config import get_settings
@@ -52,7 +53,10 @@ async def create_new_session():
 @router.get("/config", response_model=ConfigResponse)
 async def get_config():
     settings = get_settings()
-    return ConfigResponse(model=settings.openai_model)
+    return ConfigResponse(
+        model=settings.openai_model,
+        available_models=settings.available_models,
+    )
 
 
 @router.get("/sessions", response_model=SessionListResponse)
@@ -72,6 +76,11 @@ async def delete_chat_session(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
+        pdf_memory = get_pdf_memory_store()
+        try:
+            await pdf_memory.delete_session(session_id)
+        except Exception as e:
+            logger.warning("Failed to clear PDF memory for session %s: %s", session_id, e)
         delete_session(session_id)
         return DeleteSessionResponse(session_id=session_id, deleted=True)
     except Exception as e:
@@ -154,12 +163,13 @@ async def chat(request: ChatRequest):
     try:
         add_message(request.session_id, "user", request.message)
 
-        openai_service = OpenAIService()
-        answer_text, sources, reasoning_summary, steps, new_response_id = (
+        openai_service = OpenAIService(session_id=request.session_id)
+        answer_text, sources, reasoning_summary, steps, new_response_id, model_used = (
             await openai_service.chat(
                 message=request.message,
                 mode=request.mode,
                 days=request.days,
+                model=request.model,
                 previous_response_id=session.get("previous_response_id"),
             )
         )
@@ -176,6 +186,7 @@ async def chat(request: ChatRequest):
             sources=sources,
             reasoning_summary=reasoning_summary,
             steps=steps,
+            model=model_used,
         )
 
     except RateLimitError as e:
@@ -205,7 +216,7 @@ async def chat_stream(request: ChatRequest):
         try:
             add_message(request.session_id, "user", request.message)
 
-            openai_service = OpenAIService()
+            openai_service = OpenAIService(session_id=request.session_id)
             final_answer = ""
             final_sources = []
 
@@ -213,6 +224,7 @@ async def chat_stream(request: ChatRequest):
                 message=request.message,
                 mode=request.mode,
                 days=request.days,
+                model=request.model,
                 previous_response_id=session.get("previous_response_id"),
             ):
                 event_type = event.get("event", "message")

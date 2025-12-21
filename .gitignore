@@ -23,6 +23,9 @@ ENV/
 *.sqlite
 *.sqlite3
 
+# ChromaDB
+backend/chroma/
+
 # Build outputs
 dist/
 build/
