@@ -75,12 +75,13 @@ class DOJClient(BaseAPIClient):
         if topic:
             params["topic"] = topic
 
-        url = f"{self.base_url}/press-releases.json"
+        url = f"{self.base_url}/press_releases.json"
         logger.info(f"Searching DOJ press releases: {query}")
 
         data = await self._request_with_retry(
             method="GET",
             url=url,
+            headers={"Accept": "application/json"},
             params=params,
         )
 

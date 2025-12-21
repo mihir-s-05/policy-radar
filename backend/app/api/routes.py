@@ -367,6 +367,7 @@ async def chat(request: ChatRequest):
                     mode=request.mode or "both",
                     days=request.days,
                     model=model_override,
+                    sources=request.sources,
                 )
             )
         else:
@@ -376,6 +377,7 @@ async def chat(request: ChatRequest):
                     mode=request.mode or "both",
                     days=request.days,
                     model=model_override,
+                    sources=request.sources,
                     previous_response_id=session.get("previous_response_id"),
                 )
             )
@@ -404,6 +406,8 @@ async def chat(request: ChatRequest):
                 "retry_after": e.retry_after,
             },
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except APIError as e:
         logger.error(f"API error: {e}")
         raise HTTPException(status_code=e.status_code, detail=str(e))
@@ -462,6 +466,7 @@ async def chat_stream(request: ChatRequest):
                     mode=request.mode or "both",
                     days=request.days,
                     model=model_override,
+                    sources=request.sources,
                 )
             else:
                 stream_method = openai_service.chat_stream(
@@ -469,6 +474,7 @@ async def chat_stream(request: ChatRequest):
                     mode=request.mode or "both",
                     days=request.days,
                     model=model_override,
+                    sources=request.sources,
                     previous_response_id=session.get("previous_response_id"),
                 )
 
@@ -504,6 +510,15 @@ async def chat_stream(request: ChatRequest):
                     "error": "rate_limit",
                     "message": "Rate limit exceeded. Please try again in a moment.",
                     "retry_after": e.retry_after,
+                }),
+            }
+        except ValueError as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "error": "bad_request",
+                    "message": str(e),
+                    "status_code": 400,
                 }),
             }
         except APIError as e:

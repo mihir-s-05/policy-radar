@@ -25,6 +25,7 @@ export interface SourceItem {
 }
 
 export interface SourceSelection {
+  auto: boolean;
   govinfo: boolean;
   regulations: boolean;
   congress: boolean;

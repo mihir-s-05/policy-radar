@@ -1,11 +1,12 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Optional, AsyncGenerator
 from openai import OpenAI
 
 from ..config import get_settings
-from ..models.schemas import SourceItem, Step
+from ..models.schemas import SourceItem, Step, SourceSelection
 from .tool_executor import ToolExecutor, get_tool_label
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,17 @@ CRITICAL RULES:
 5. Keep responses readable and well-organized. Use bullet points or numbered lists for multiple items.
 
 When searching:
-- Use regs_search_documents for proposed rules, final rules, notices, and other regulatory documents
-- Use regs_search_dockets for broader rulemaking proceedings
-- Use govinfo_search for Federal Register content and other official government publications
-- The user has specified a time window - respect it by using the 'days' parameter on regs_search_documents and govinfo_search
+- Prefer domain-specific tools when relevant; do not default to just Regulations.gov / GovInfo.
+- Use regs_search_documents / regs_search_dockets for rulemaking, proposed/final rules, dockets, and comments.
+- Use govinfo_search for official publications (incl. Federal Register) and broad gov publications.
+- Use federal_register_search specifically for Federal Register items (rules, proposed rules, notices, presidential documents).
+- Use congress_search_bills / congress_search_votes for legislation and roll call votes.
+- Use usaspending_search for contracts, grants, awards, recipients, and funding flows.
+- Use fiscal_data_query for Treasury Fiscal Data (debt, receipts, outlays, interest rates).
+- Use datagov_search for datasets on data.gov and open data catalogs.
+- Use doj_search for DOJ press releases and news.
+- Use searchgov_search for broad search across government websites (when configured).
+- Respect the user's time window by setting the 'days' parameter on any tool that supports it (when applicable).
 
 READING FULL DOCUMENT CONTENT:
 - After finding documents, use regs_read_document_content or govinfo_read_package_content to read the full text
@@ -42,6 +50,46 @@ Format your response clearly with:
 - Key details organized logically
 - Direct links to sources
 - The required disclaimer at the end"""
+
+SOURCE_DISPLAY_NAMES: dict[str, str] = {
+    "regulations": "Regulations.gov",
+    "govinfo": "GovInfo",
+    "congress": "Congress.gov",
+    "federal_register": "Federal Register",
+    "usaspending": "USAspending.gov",
+    "fiscal_data": "Treasury Fiscal Data",
+    "datagov": "data.gov",
+    "doj": "DOJ",
+    "searchgov": "Search.gov",
+}
+
+TOOL_TO_SOURCE: dict[str, Optional[str]] = {
+    "regs_search_documents": "regulations",
+    "regs_search_dockets": "regulations",
+    "regs_get_document": "regulations",
+    "regs_read_document_content": "regulations",
+    "govinfo_search": "govinfo",
+    "govinfo_package_summary": "govinfo",
+    "govinfo_read_package_content": "govinfo",
+    "congress_search_bills": "congress",
+    "congress_search_votes": "congress",
+    "federal_register_search": "federal_register",
+    "usaspending_search": "usaspending",
+    "fiscal_data_query": "fiscal_data",
+    "datagov_search": "datagov",
+    "doj_search": "doj",
+    "searchgov_search": "searchgov",
+    "fetch_url_content": None,
+    "search_pdf_memory": None,
+}
+
+TOOLS_WITH_DAYS_PARAM = {
+    "regs_search_documents",
+    "govinfo_search",
+    "federal_register_search",
+    "usaspending_search",
+    "doj_search",
+}
 
 TOOLS = [
     {
@@ -344,7 +392,7 @@ TOOLS = [
                     "default": 10
                 }
             },
-            "required": []
+            "required": ["award_type"]
         }
     },
     {
@@ -620,33 +668,216 @@ class OpenAIService:
 
         return safe_result, message_item
 
-    def _format_user_message(self, message: str, mode: str, days: int) -> str:
-        mode_context = {
-            "regulations": "Search Regulations.gov only.",
-            "govinfo": "Search GovInfo only.",
-            "both": "Search both Regulations.gov and GovInfo for comprehensive results.",
-        }
+    def _format_user_message(
+        self,
+        message: str,
+        days: int,
+        selected_sources: Optional[set[str]] = None,
+        auto_rationale: Optional[str] = None,
+    ) -> str:
+        sources_line = "Auto"
+        if selected_sources:
+            sources_line = ", ".join(
+                SOURCE_DISPLAY_NAMES.get(s, s) for s in sorted(selected_sources)
+            )
+        rationale_line = f"\n- Auto selection: {auto_rationale}" if auto_rationale else ""
 
         return f"""User query: {message}
 
 Search context:
 - Time window: Last {days} days
-- Search mode: {mode_context.get(mode, mode_context['both'])}
+- Sources: {sources_line}{rationale_line}
 
 Please search for relevant information and provide a comprehensive answer with citations."""
 
-    def _get_available_tools(self, mode: str) -> list[dict]:
+    def _get_configured_sources(self) -> set[str]:
+        settings = get_settings()
+        configured = set(SOURCE_DISPLAY_NAMES.keys())
+
+        if not settings.gov_api_key:
+            configured.discard("regulations")
+            configured.discard("govinfo")
+            configured.discard("congress")
+
+        if not (settings.searchgov_affiliate and settings.searchgov_access_key):
+            configured.discard("searchgov")
+
+        return configured
+
+    def _filter_tools_for_sources(self, tools: list[dict], selected_sources: set[str]) -> list[dict]:
+        filtered = []
+        for tool in tools:
+            tool_name = tool.get("name")
+            source_key = TOOL_TO_SOURCE.get(tool_name)
+            if source_key is None or source_key in selected_sources:
+                filtered.append(tool)
+        return filtered
+
+    def _resolve_source_preferences(
+        self,
+        mode: str,
+        sources: Optional[SourceSelection],
+    ) -> tuple[bool, set[str]]:
+        configured_sources = self._get_configured_sources()
+
+        if sources is None:
+            if mode == "regulations":
+                return False, {"regulations"} & configured_sources
+            if mode == "govinfo":
+                return False, {"govinfo"} & configured_sources
+            return True, set(SOURCE_DISPLAY_NAMES.keys()) & configured_sources
+
+        requested_sources = {
+            key for key in SOURCE_DISPLAY_NAMES.keys()
+            if getattr(sources, key, False)
+        }
+
+        auto_enabled = bool(getattr(sources, "auto", False))
+
+        if not requested_sources:
+            if auto_enabled:
+                requested_sources = set(SOURCE_DISPLAY_NAMES.keys())
+            else:
+                return False, set()
+
+        if mode == "regulations":
+            requested_sources &= {"regulations"}
+        elif mode == "govinfo":
+            requested_sources &= {"govinfo"}
+
+        requested_sources &= configured_sources
+        return auto_enabled, requested_sources
+
+    def _extract_json_object(self, text: str) -> Optional[dict]:
+        if not text:
+            return None
+        text = text.strip()
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+
+    async def _auto_select_sources(
+        self,
+        message: str,
+        allowed_sources: set[str],
+        model_to_use: str,
+    ) -> tuple[set[str], Optional[str]]:
+        if not allowed_sources:
+            return set(), None
+        if len(allowed_sources) == 1:
+            return set(allowed_sources), "Only one source available."
+
+        options_text = "\n".join(
+            f"- {key}: {SOURCE_DISPLAY_NAMES[key]}"
+            for key in sorted(allowed_sources)
+        )
+
+        rubric = """Routing guidance (choose all that apply):
+- regulations: rulemakings, dockets, proposed/final rules, CFR changes, agency regulatory actions
+- govinfo: official publications, broad federal documents; good companion for regulations/federal register
+- federal_register: rules/notices/presidential documents specifically in the Federal Register
+- congress: bills, legislation status, roll call votes, sponsors, committees
+- usaspending: federal awards/contracts/grants, recipients, agencies, award totals
+- fiscal_data: Treasury fiscal time series (debt, receipts, outlays, interest rates)
+- datagov: datasets, open data resources, data catalog discovery
+- doj: DOJ press releases, enforcement announcements, investigations (public-facing)
+- searchgov: broad web search across .gov sites (when query is broad or agency-specific web pages are needed)"""
+
+        selector_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You route user queries to the most relevant data sources. "
+                    "Use the routing guidance and choose the sources most likely to contain authoritative results. "
+                    "Return STRICT JSON only: {\"sources\": [\"source_key\", ...], \"rationale\": \"short\"}. "
+                    "Choose 1-6 sources; choose fewer when the query is narrow. Only choose from the allowed list."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"User query: {message}\n\nAllowed sources:\n{options_text}\n\n{rubric}",
+            },
+        ]
+
+        try:
+            response = self.client.chat.completions.create(
+                model=model_to_use,
+                messages=selector_messages,
+                temperature=0,
+                max_tokens=200,
+            )
+
+            raw = response.choices[0].message.content or ""
+            data = self._extract_json_object(raw) or {}
+            chosen = [
+                s for s in (data.get("sources") or [])
+                if isinstance(s, str) and s in allowed_sources
+            ]
+            chosen_sources = set(chosen[:6])
+            rationale = data.get("rationale")
+            return chosen_sources, rationale if isinstance(rationale, str) else None
+        except Exception as exc:
+            logger.warning("Auto source selection failed; falling back to heuristics: %s", exc)
+
+        msg = message.lower()
+        picks: list[str] = []
+        if any(k in msg for k in ["bill", "hr", "h.r.", "s.", "senate", "house", "congress", "roll call", "vote"]):
+            picks.append("congress")
+        if any(k in msg for k in ["federal register", "fr ", "presidential", "executive order"]):
+            picks.append("federal_register")
+            picks.append("govinfo")
+        if any(k in msg for k in ["spending", "contract", "grant", "award", "procurement", "usaspending"]):
+            picks.append("usaspending")
+        if any(k in msg for k in ["debt", "deficit", "receipts", "outlays", "treasury", "interest rate"]):
+            picks.append("fiscal_data")
+        if any(k in msg for k in ["dataset", "data.gov", "csv", "open data"]):
+            picks.append("datagov")
+        if any(k in msg for k in ["doj", "justice department", "press release", "indictment"]):
+            picks.append("doj")
+        if any(k in msg for k in ["regulation", "rulemaking", "proposed rule", "final rule", "docket", "cfr"]):
+            picks.append("regulations")
+            picks.append("govinfo")
+
+        fallback = [p for p in picks if p in allowed_sources]
+        if not fallback:
+            fallback = [p for p in ["regulations", "govinfo"] if p in allowed_sources]
+        if not fallback:
+            fallback = list(sorted(allowed_sources))[:2]
+
+        return set(fallback[:4]), "Heuristic fallback."
+
+    def _apply_days_default(self, tool_name: str, args: dict, days: int) -> None:
+        if tool_name in TOOLS_WITH_DAYS_PARAM and "days" not in args:
+            args["days"] = days
+
+    def _get_available_tools(self, mode: str, selected_sources: Optional[set[str]] = None) -> list[dict]:
         fetch_url_tool = [t for t in TOOLS if t["name"] == "fetch_url_content"]
         memory_tool = [t for t in TOOLS if t["name"] == "search_pdf_memory"]
 
         if mode == "regulations":
             regs_tools = [t for t in TOOLS if t["name"].startswith("regs_")]
-            return regs_tools + fetch_url_tool + memory_tool
+            tools = regs_tools + fetch_url_tool + memory_tool
         elif mode == "govinfo":
             govinfo_tools = [t for t in TOOLS if t["name"].startswith("govinfo_")]
-            return govinfo_tools + fetch_url_tool + memory_tool
+            tools = govinfo_tools + fetch_url_tool + memory_tool
         else:
-            return TOOLS
+            tools = TOOLS
+
+        if selected_sources is None:
+            return tools
+        return self._filter_tools_for_sources(tools, selected_sources)
 
     def _convert_tools_for_chat_completions(self, tools: list[dict]) -> list[dict]:
         converted = []
@@ -667,14 +898,49 @@ Please search for relevant information and provide a comprehensive answer with c
         mode: str,
         days: int,
         model: Optional[str] = None,
+        sources: Optional[SourceSelection] = None,
     ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str, str]:
         self.tool_executor.clear_sources()
         steps: list[Step] = []
         step_counter = 0
 
         model_to_use = model or self.model
-        formatted_message = self._format_user_message(message, mode, days)
-        available_tools = self._get_available_tools(mode)
+        auto_enabled, allowed_sources = self._resolve_source_preferences(mode, sources)
+        if not allowed_sources:
+            raise ValueError("No sources enabled/available for this request.")
+
+        selected_sources = allowed_sources
+        auto_rationale = None
+        if auto_enabled:
+            step_counter += 1
+            selected_sources, auto_rationale = await self._auto_select_sources(
+                message=message,
+                allowed_sources=allowed_sources,
+                model_to_use=model_to_use,
+            )
+            if not selected_sources:
+                selected_sources = allowed_sources
+            steps.append(
+                Step(
+                    step_id=str(step_counter),
+                    status="done",
+                    label="Auto-select sources",
+                    tool_name="auto_select_sources",
+                    args={"allowed_sources": sorted(allowed_sources)},
+                    result_preview={
+                        "selected_sources": sorted(selected_sources),
+                        "rationale": auto_rationale,
+                    },
+                )
+            )
+
+        formatted_message = self._format_user_message(
+            message=message,
+            days=days,
+            selected_sources=selected_sources,
+            auto_rationale=auto_rationale,
+        )
+        available_tools = self._get_available_tools(mode, selected_sources=selected_sources)
         chat_tools = self._convert_tools_for_chat_completions(available_tools)
 
         messages = [
@@ -701,8 +967,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 tool_name = call.function.name
                 args = json.loads(call.function.arguments)
 
-                if tool_name in ("regs_search_documents", "govinfo_search") and "days" not in args:
-                    args["days"] = days
+                self._apply_days_default(tool_name, args, days)
 
                 step = Step(
                     step_id=step_id,
@@ -745,13 +1010,57 @@ Please search for relevant information and provide a comprehensive answer with c
         mode: str,
         days: int,
         model: Optional[str] = None,
+        sources: Optional[SourceSelection] = None,
     ) -> AsyncGenerator[dict, None]:
         self.tool_executor.clear_sources()
         step_counter = 0
 
         model_to_use = model or self.model
-        formatted_message = self._format_user_message(message, mode, days)
-        available_tools = self._get_available_tools(mode)
+        auto_enabled, allowed_sources = self._resolve_source_preferences(mode, sources)
+        if not allowed_sources:
+            raise ValueError("No sources enabled/available for this request.")
+
+        selected_sources = allowed_sources
+        auto_rationale = None
+        if auto_enabled:
+            step_counter += 1
+            auto_step_id = str(step_counter)
+            yield {
+                "event": "step",
+                "data": {
+                    "step_id": auto_step_id,
+                    "status": "running",
+                    "label": "Auto-select sources",
+                    "tool_name": "auto_select_sources",
+                    "args": {"allowed_sources": sorted(allowed_sources)},
+                },
+            }
+            selected_sources, auto_rationale = await self._auto_select_sources(
+                message=message,
+                allowed_sources=allowed_sources,
+                model_to_use=model_to_use,
+            )
+            if not selected_sources:
+                selected_sources = allowed_sources
+            yield {
+                "event": "step",
+                "data": {
+                    "step_id": auto_step_id,
+                    "status": "done",
+                    "result_preview": {
+                        "selected_sources": sorted(selected_sources),
+                        "rationale": auto_rationale,
+                    },
+                },
+            }
+
+        formatted_message = self._format_user_message(
+            message=message,
+            days=days,
+            selected_sources=selected_sources,
+            auto_rationale=auto_rationale,
+        )
+        available_tools = self._get_available_tools(mode, selected_sources=selected_sources)
         chat_tools = self._convert_tools_for_chat_completions(available_tools)
 
         messages = [
@@ -776,8 +1085,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 tool_name = call.function.name
                 args = json.loads(call.function.arguments)
 
-                if tool_name in ("regs_search_documents", "govinfo_search") and "days" not in args:
-                    args["days"] = days
+                self._apply_days_default(tool_name, args, days)
 
                 yield {
                     "event": "step",
@@ -848,6 +1156,7 @@ Please search for relevant information and provide a comprehensive answer with c
         mode: str,
         days: int,
         model: Optional[str] = None,
+        sources: Optional[SourceSelection] = None,
         previous_response_id: Optional[str] = None,
     ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str, str]:
         self.tool_executor.clear_sources()
@@ -855,8 +1164,42 @@ Please search for relevant information and provide a comprehensive answer with c
         step_counter = 0
 
         model_to_use = model or self.model
-        formatted_message = self._format_user_message(message, mode, days)
-        available_tools = self._get_available_tools(mode)
+        auto_enabled, allowed_sources = self._resolve_source_preferences(mode, sources)
+        if not allowed_sources:
+            raise ValueError("No sources enabled/available for this request.")
+
+        selected_sources = allowed_sources
+        auto_rationale = None
+        if auto_enabled:
+            step_counter += 1
+            selected_sources, auto_rationale = await self._auto_select_sources(
+                message=message,
+                allowed_sources=allowed_sources,
+                model_to_use=model_to_use,
+            )
+            if not selected_sources:
+                selected_sources = allowed_sources
+            steps.append(
+                Step(
+                    step_id=str(step_counter),
+                    status="done",
+                    label="Auto-select sources",
+                    tool_name="auto_select_sources",
+                    args={"allowed_sources": sorted(allowed_sources)},
+                    result_preview={
+                        "selected_sources": sorted(selected_sources),
+                        "rationale": auto_rationale,
+                    },
+                )
+            )
+
+        formatted_message = self._format_user_message(
+            message=message,
+            days=days,
+            selected_sources=selected_sources,
+            auto_rationale=auto_rationale,
+        )
+        available_tools = self._get_available_tools(mode, selected_sources=selected_sources)
 
         input_messages = [{"role": "user", "content": formatted_message}]
 
@@ -888,8 +1231,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 tool_name = call.name
                 args = json.loads(call.arguments)
 
-                if tool_name in ("regs_search_documents", "govinfo_search") and "days" not in args:
-                    args["days"] = days
+                self._apply_days_default(tool_name, args, days)
 
                 step = Step(
                     step_id=step_id,
@@ -947,14 +1289,58 @@ Please search for relevant information and provide a comprehensive answer with c
         mode: str,
         days: int,
         model: Optional[str] = None,
+        sources: Optional[SourceSelection] = None,
         previous_response_id: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         self.tool_executor.clear_sources()
         step_counter = 0
 
         model_to_use = model or self.model
-        formatted_message = self._format_user_message(message, mode, days)
-        available_tools = self._get_available_tools(mode)
+        auto_enabled, allowed_sources = self._resolve_source_preferences(mode, sources)
+        if not allowed_sources:
+            raise ValueError("No sources enabled/available for this request.")
+
+        selected_sources = allowed_sources
+        auto_rationale = None
+        if auto_enabled:
+            step_counter += 1
+            auto_step_id = str(step_counter)
+            yield {
+                "event": "step",
+                "data": {
+                    "step_id": auto_step_id,
+                    "status": "running",
+                    "label": "Auto-select sources",
+                    "tool_name": "auto_select_sources",
+                    "args": {"allowed_sources": sorted(allowed_sources)},
+                },
+            }
+            selected_sources, auto_rationale = await self._auto_select_sources(
+                message=message,
+                allowed_sources=allowed_sources,
+                model_to_use=model_to_use,
+            )
+            if not selected_sources:
+                selected_sources = allowed_sources
+            yield {
+                "event": "step",
+                "data": {
+                    "step_id": auto_step_id,
+                    "status": "done",
+                    "result_preview": {
+                        "selected_sources": sorted(selected_sources),
+                        "rationale": auto_rationale,
+                    },
+                },
+            }
+
+        formatted_message = self._format_user_message(
+            message=message,
+            days=days,
+            selected_sources=selected_sources,
+            auto_rationale=auto_rationale,
+        )
+        available_tools = self._get_available_tools(mode, selected_sources=selected_sources)
 
         input_messages = [{"role": "user", "content": formatted_message}]
 

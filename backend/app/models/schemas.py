@@ -29,15 +29,16 @@ class SourceItem(BaseModel):
 
 
 class SourceSelection(BaseModel):
+    auto: bool = True
     govinfo: bool = True
     regulations: bool = True
-    congress: bool = False
-    federal_register: bool = False
-    usaspending: bool = False
-    fiscal_data: bool = False
-    datagov: bool = False
-    doj: bool = False
-    searchgov: bool = False
+    congress: bool = True
+    federal_register: bool = True
+    usaspending: bool = True
+    fiscal_data: bool = True
+    datagov: bool = True
+    doj: bool = True
+    searchgov: bool = True
 
 
 class CustomModelConfig(BaseModel):

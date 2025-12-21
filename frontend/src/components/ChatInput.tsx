@@ -44,20 +44,48 @@ function loadSourcesFromStorage(): SourceSelection {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored) as Partial<SourceSelection>;
+      const isMigrationFromManual = typeof parsed.auto !== "boolean";
+      if (isMigrationFromManual) {
+        return {
+          auto: true,
+          govinfo: true,
+          regulations: true,
+          congress: true,
+          federal_register: true,
+          usaspending: true,
+          fiscal_data: true,
+          datagov: true,
+          doj: true,
+          searchgov: true,
+        };
+      }
+      return {
+        auto: parsed.auto ?? true,
+        govinfo: parsed.govinfo ?? true,
+        regulations: parsed.regulations ?? true,
+        congress: parsed.congress ?? true,
+        federal_register: parsed.federal_register ?? true,
+        usaspending: parsed.usaspending ?? true,
+        fiscal_data: parsed.fiscal_data ?? true,
+        datagov: parsed.datagov ?? true,
+        doj: parsed.doj ?? true,
+        searchgov: parsed.searchgov ?? true,
+      };
     }
   } catch {
   }
   return {
+    auto: true,
     govinfo: true,
     regulations: true,
-    congress: false,
-    federal_register: false,
-    usaspending: false,
-    fiscal_data: false,
-    datagov: false,
-    doj: false,
-    searchgov: false,
+    congress: true,
+    federal_register: true,
+    usaspending: true,
+    fiscal_data: true,
+    datagov: true,
+    doj: true,
+    searchgov: true,
   };
 }
 
@@ -82,7 +110,10 @@ export function ChatInput({
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
 
-  const enabledCount = Object.values(sources).filter(Boolean).length;
+  const enabledCount = SOURCE_OPTIONS.filter((opt) => sources[opt.key]).length;
+  const archivesLabel = sources.auto
+    ? `Auto (${enabledCount} allowed)`
+    : `${enabledCount} selected`;
 
   const submitMessage = () => {
     const trimmed = message.trim();
@@ -105,6 +136,12 @@ export function ChatInput({
 
   const toggleSource = (key: keyof SourceSelection) => {
     const newSources = { ...sources, [key]: !sources[key] };
+    onSourcesChange(newSources);
+    saveSourcesToStorage(newSources);
+  };
+
+  const toggleAuto = () => {
+    const newSources = { ...sources, auto: !sources.auto };
     onSourcesChange(newSources);
     saveSourcesToStorage(newSources);
   };
@@ -156,12 +193,34 @@ export function ChatInput({
                   className="h-8 w-[140px] justify-between text-xs btn-parchment"
                   disabled={isLoading}
                 >
-                  <span style={{ fontFamily: "'Spectral', serif" }}>{enabledCount} selected</span>
+                  <span style={{ fontFamily: "'Spectral', serif" }}>{archivesLabel}</span>
                   <ChevronDown className="ml-2 h-3 w-3 opacity-50" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-48 p-0 parchment-bg border-sepia-light/50" align="start">
                 <div className="max-h-64 overflow-y-auto p-1">
+                  <button
+                    type="button"
+                    onClick={toggleAuto}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-parchment-300/50 ink-text",
+                      sources.auto && "font-medium"
+                    )}
+                    style={{ fontFamily: "'IM Fell English', serif" }}
+                  >
+                    <div className={cn(
+                      "flex h-4 w-4 items-center justify-center rounded-sm border",
+                      sources.auto
+                        ? "border-sepia-brown bg-sepia-brown text-parchment-100"
+                        : "border-sepia-light/50"
+                    )}>
+                      {sources.auto && <Check className="h-3 w-3" />}
+                    </div>
+                    Auto (model chooses)
+                  </button>
+
+                  <div className="my-1 h-px bg-sepia-light/30" />
+
                   {SOURCE_OPTIONS.map((opt) => (
                     <button
                       key={opt.key}

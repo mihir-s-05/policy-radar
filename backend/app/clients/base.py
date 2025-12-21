@@ -95,10 +95,19 @@ class BaseAPIClient:
                             )
 
                     if response.status_code >= 400:
-                        error_text = response.text
-                        logger.error(f"API error {response.status_code}: {error_text}")
+                        content_type = response.headers.get("content-type", "")
+                        error_text = response.text or ""
+                        preview = error_text[:800]
+                        if "text/html" in (content_type or "").lower():
+                            preview = "HTML error page returned (truncated)."
+                        logger.error(
+                            "API error %s (%s): %s",
+                            response.status_code,
+                            content_type,
+                            preview,
+                        )
                         raise APIError(
-                            f"API request failed: {error_text}",
+                            f"API request failed ({response.status_code} {content_type}): {preview}",
                             status_code=response.status_code,
                         )
 
