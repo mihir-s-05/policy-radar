@@ -21,95 +21,38 @@ A chatbot for exploring recent U.S. federal regulatory activity using official g
   - **GOV_API_KEY**: Get from [api.data.gov](https://api.data.gov/signup/)
   - **OPENAI_API_KEY**: Get from [OpenAI Platform](https://platform.openai.com/)
 
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GOV_API_KEY` | Yes | - | API key from api.data.gov |
+| `OPENAI_API_KEY` | Yes | - | OpenAI API key |
+| `OPENAI_MODEL` | No | `gpt-5.2` | Chat model |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model for PDF RAG |
+| `PORT` | No | `8000` | Backend port |
+| `RAG_PERSIST_DIR` | No | `./chroma` | ChromaDB storage path |
+| `RAG_COLLECTION` | No | `pdf_memory` | ChromaDB collection name |
+| `RAG_CHUNK_SIZE` | No | `1200` | PDF chunk size (chars) |
+| `RAG_CHUNK_OVERLAP` | No | `200` | PDF chunk overlap (chars) |
+| `RAG_MAX_CHUNKS` | No | `500` | Max chunks per PDF |
+| `RAG_TOP_K` | No | `5` | Retrieval count |
+| `VITE_API_BASE` | No | `http://localhost:8000` | Frontend API base URL |
+
 ## Quick Start
-
-### 1. Set Environment Variables
-
-```bash
-# Required
-export GOV_API_KEY=your_government_api_key
-export OPENAI_API_KEY=your_openai_api_key
-
-# Optional
-export OPENAI_MODEL=gpt-5.2  # Default: gpt-5.2
-export EMBEDDING_MODEL=text-embedding-3-small  # Default: text-embedding-3-small
-export PORT=8000            # Default: 8000
-export RAG_PERSIST_DIR=./chroma  # Default: ./chroma
-```
-
-On Windows (PowerShell):
-```powershell
-$env:GOV_API_KEY = "your_government_api_key"
-$env:OPENAI_API_KEY = "your_openai_api_key"
-```
-
-### 2. Run the Backend
 
 ```bash
 cd backend
-
-# Create virtual environment (recommended)
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Run the server
 uvicorn app.main:app --reload --port 8000
 ```
 
-The API will be available at `http://localhost:8000`
-
-### 3. Run the Frontend
-
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Run development server
 npm run dev
 ```
-
-The UI will be available at `http://localhost:5173`
-
-## Configuration
-
-### Frontend Environment
-
-Create a `.env` file in the `frontend` directory:
-
-```env
-VITE_API_BASE=http://localhost:8000
-```
-
-### Backend Environment
-
-Create a `.env` file in the `backend` directory:
-
-```env
-GOV_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.2
-EMBEDDING_MODEL=text-embedding-3-small
-PORT=8000
-
-# RAG / PDF Memory
-RAG_PERSIST_DIR=./chroma
-RAG_COLLECTION=pdf_memory
-RAG_CHUNK_SIZE=1200
-RAG_CHUNK_OVERLAP=200
-RAG_MAX_CHUNKS=500
-RAG_TOP_K=5
-```
-
-### PDF Memory (RAG)
-
-- PDF text is chunked and embedded per session, then stored in ChromaDB for retrieval
-- The assistant can search indexed PDF content with the `search_pdf_memory` tool
-- Persistent storage lives under `RAG_PERSIST_DIR` and survives restarts
 
 ## Example Prompts
 
@@ -144,46 +87,6 @@ RAG_TOP_K=5
   "days": 30       // 7, 30, 60, or 90
 }
 ```
-
-## Troubleshooting
-
-### Rate Limit Errors (HTTP 429)
-
-The government APIs have rate limits:
-- Default: ~1000 requests/hour for registered API keys
-- DEMO_KEY: Much lower limits
-
-**Solutions:**
-1. Wait and retry (the app handles this automatically with exponential backoff)
-2. Register for a production API key at [api.data.gov](https://api.data.gov/signup/)
-
-### Invalid API Key Errors
-
-- Verify your `GOV_API_KEY` is set correctly
-- Ensure there are no extra spaces or quotes
-- Check that the key is active at [api.data.gov](https://api.data.gov/)
-
-### OpenAI Errors
-
-- Verify your `OPENAI_API_KEY` is valid
-- Check your OpenAI account has sufficient credits
-- Ensure the model specified in `OPENAI_MODEL` is available to your account
-
-### PDF Extraction Issues
-
-- PDF text extraction uses `pdfplumber` first, then falls back to `pypdf`
-- PDF image extraction uses `PyMuPDF`
-- There is no OCR; scanned PDFs without embedded text may yield limited results
-
-### Regulations.gov 403s
-
-- Some pages occasionally return `403` on first request; the backend retries with browser-like headers and falls back to the API-provided file formats
-
-### Connection Errors
-
-1. Make sure both backend and frontend are running
-2. Check the backend is accessible at `http://localhost:8000`
-3. Verify CORS is properly configured (frontend origin must be allowed)
 
 ## Architecture
 
