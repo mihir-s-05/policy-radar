@@ -2,7 +2,15 @@ export type SourceType =
   | "regulations_document"
   | "regulations_docket"
   | "govinfo_result"
-  | "govinfo_package";
+  | "govinfo_package"
+  | "congress_bill"
+  | "congress_vote"
+  | "federal_register"
+  | "usaspending"
+  | "fiscal_data"
+  | "datagov"
+  | "doj_press_release"
+  | "searchgov";
 
 export interface SourceItem {
   source_type: SourceType;
@@ -12,6 +20,20 @@ export interface SourceItem {
   date: string | null;
   url: string;
   excerpt: string | null;
+  pdf_url?: string | null;
+  content_type?: string | null;
+}
+
+export interface SourceSelection {
+  govinfo: boolean;
+  regulations: boolean;
+  congress: boolean;
+  federal_register: boolean;
+  usaspending: boolean;
+  fiscal_data: boolean;
+  datagov: boolean;
+  doj: boolean;
+  searchgov: boolean;
 }
 
 export interface Step {
@@ -28,9 +50,24 @@ export type SearchMode = "regulations" | "govinfo" | "both";
 export interface ChatRequest {
   session_id: string;
   message: string;
-  mode: SearchMode;
+  mode?: SearchMode;
+  sources?: SourceSelection;
   days: number;
   model?: string;
+  provider?: ModelProvider;
+  api_mode?: ApiMode;
+  custom_model?: CustomModelConfig;
+  api_key?: string;
+}
+
+export type ModelProvider = "openai" | "anthropic" | "gemini" | "custom";
+
+export type ApiMode = "responses" | "chat_completions";
+
+export interface CustomModelConfig {
+  base_url: string;
+  model_name: string;
+  api_key?: string;
 }
 
 export interface ChatResponse {
@@ -91,9 +128,32 @@ export interface UpdateMessageResponse {
   updated: boolean;
 }
 
+export interface ProviderInfo {
+  name: string;
+  display_name: string;
+  base_url: string;
+  models: string[];
+  api_key_detected: boolean;
+  api_mode: ApiMode;
+}
+
 export interface ConfigResponse {
   model: string;
   available_models: string[];
+  default_api_mode: ApiMode;
+  providers: Record<string, ProviderInfo>;
+}
+
+export interface ValidateModelRequest {
+  provider: ModelProvider;
+  model_name: string;
+  api_key?: string;
+  base_url?: string;
+}
+
+export interface ValidateModelResponse {
+  valid: boolean;
+  message: string;
 }
 
 export interface StepEvent {

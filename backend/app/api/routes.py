@@ -15,6 +15,9 @@ from ..models.schemas import (
     UpdateMessageRequest,
     UpdateMessageResponse,
     ConfigResponse,
+    ProviderInfo,
+    ValidateModelRequest,
+    ValidateModelResponse,
 )
 from ..models.database import (
     create_session,
@@ -53,10 +56,173 @@ async def create_new_session():
 @router.get("/config", response_model=ConfigResponse)
 async def get_config():
     settings = get_settings()
+    providers = {
+        "openai": ProviderInfo(
+            name="openai",
+            display_name="OpenAI",
+            base_url=settings.openai_base_url,
+            models=settings.available_models,
+            api_key_detected=bool(settings.openai_api_key),
+            api_mode="responses",
+        ),
+        "anthropic": ProviderInfo(
+            name="anthropic",
+            display_name="Anthropic",
+            base_url=settings.anthropic_base_url,
+            models=settings.anthropic_models,
+            api_key_detected=bool(settings.anthropic_api_key),
+            api_mode="chat_completions",
+        ),
+        "gemini": ProviderInfo(
+            name="gemini",
+            display_name="Google Gemini",
+            base_url=settings.gemini_base_url,
+            models=settings.gemini_models,
+            api_key_detected=bool(settings.google_api_key),
+            api_mode="chat_completions",
+        ),
+    }
     return ConfigResponse(
         model=settings.openai_model,
         available_models=settings.available_models,
+        default_api_mode=settings.default_api_mode,
+        providers=providers,
     )
+
+
+@router.post("/validate-model", response_model=ValidateModelResponse)
+async def validate_model(request: ValidateModelRequest):
+    import httpx
+
+    settings = get_settings()
+
+    provider = request.provider
+    model_name = request.model_name
+
+    api_key = request.api_key
+    base_url = request.base_url
+
+    if provider == "openai":
+        api_key = api_key or settings.openai_api_key
+        base_url = "https://api.openai.com/v1"
+        if not api_key:
+            return ValidateModelResponse(valid=False, message="OpenAI API key missing")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"}
+                )
+                if response.status_code != 200:
+                    return ValidateModelResponse(valid=False, message=f"OpenAI API Error: {response.status_code}")
+
+                models_data = response.json()
+                model_ids = [m["id"] for m in models_data.get("data", [])]
+
+                if model_name in model_ids:
+                    return ValidateModelResponse(valid=True, message=f"Model '{model_name}' found.")
+                else:
+                    return ValidateModelResponse(valid=False, message=f"Model '{model_name}' not found in OpenAI list.")
+        except Exception as e:
+            return ValidateModelResponse(valid=False, message=f"Connection failed: {str(e)}")
+
+    elif provider == "anthropic":
+        api_key = api_key or settings.anthropic_api_key
+        base_url = "https://api.anthropic.com/v1"
+        if not api_key:
+             return ValidateModelResponse(valid=False, message="Anthropic API key missing")
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{base_url}/models",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01"
+                    }
+                )
+                if response.status_code != 200:
+                    return ValidateModelResponse(valid=False, message=f"Anthropic API Error: {response.status_code}")
+
+                models_data = response.json()
+                model_ids = [m["id"] for m in models_data.get("data", [])]
+
+                if model_name in model_ids:
+                    return ValidateModelResponse(valid=True, message=f"Model '{model_name}' found.")
+
+                return ValidateModelResponse(valid=False, message=f"Model '{model_name}' not found in Anthropic list.")
+        except Exception as e:
+             return ValidateModelResponse(valid=False, message=f"Connection failed: {str(e)}")
+
+    elif provider == "gemini":
+        api_key = api_key or settings.google_api_key
+        base_url = "https://generativelanguage.googleapis.com/v1beta"
+        if not api_key:
+             return ValidateModelResponse(valid=False, message="Gemini API key missing")
+
+        try:
+            full_model_name = f"models/{model_name}" if not model_name.startswith("models/") else model_name
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{base_url}/models?key={api_key}"
+                )
+                if response.status_code != 200:
+                     return ValidateModelResponse(valid=False, message=f"Gemini API Error: {response.status_code}")
+
+                data = response.json()
+                models = data.get("models", [])
+
+                found = False
+                for m in models:
+                    if m["name"] == full_model_name or m["name"] == model_name:
+                        found = True
+                        break
+                    if m["name"].endswith(f"/{model_name}"):
+                        found = True
+                        break
+
+                if found:
+                    return ValidateModelResponse(valid=True, message=f"Model '{model_name}' found.")
+                else:
+                    return ValidateModelResponse(valid=False, message=f"Model '{model_name}' not found in Gemini list.")
+
+        except Exception as e:
+             return ValidateModelResponse(valid=False, message=f"Connection failed: {str(e)}")
+
+    elif provider == "custom":
+        if not base_url:
+            return ValidateModelResponse(valid=False, message="Base URL required for custom provider")
+
+        try:
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{base_url.rstrip('/')}/models",
+                    headers=headers,
+                    timeout=5.0
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if "data" in data and isinstance(data["data"], list):
+                        ids = [m.get("id") for m in data["data"]]
+                        if model_name in ids:
+                             return ValidateModelResponse(valid=True, message=f"Model '{model_name}' found via compatible list.")
+                        else:
+                             return ValidateModelResponse(valid=False, message=f"Model '{model_name}' not found in custom list.")
+                    else:
+                        return ValidateModelResponse(valid=False, message="Could not parse models list from custom endpoint.")
+                else:
+                     return ValidateModelResponse(valid=False, message=f"Custom endpoint returned {response.status_code}")
+
+        except Exception as e:
+             return ValidateModelResponse(valid=False, message=f"Connection failed: {str(e)}")
+
+    return ValidateModelResponse(valid=False, message="Unknown provider")
 
 
 @router.get("/sessions", response_model=SessionListResponse)
@@ -163,16 +329,56 @@ async def chat(request: ChatRequest):
     try:
         add_message(request.session_id, "user", request.message)
 
-        openai_service = OpenAIService(session_id=request.session_id)
-        answer_text, sources, reasoning_summary, steps, new_response_id, model_used = (
-            await openai_service.chat(
-                message=request.message,
-                mode=request.mode,
-                days=request.days,
-                model=request.model,
-                previous_response_id=session.get("previous_response_id"),
-            )
+        settings = get_settings()
+
+        base_url = None
+        api_key = request.api_key
+        model_override = request.model
+        provider = request.provider or "openai"
+        
+        if provider == "anthropic":
+            base_url = settings.anthropic_base_url
+            api_key = api_key or settings.anthropic_api_key
+            api_mode = "chat_completions"
+        elif provider == "gemini":
+            base_url = settings.gemini_base_url
+            api_key = api_key or settings.google_api_key
+            api_mode = "chat_completions"
+        elif provider == "custom" and request.custom_model:
+            base_url = request.custom_model.base_url
+            model_override = request.custom_model.model_name
+            if request.custom_model.api_key:
+                api_key = request.custom_model.api_key
+            api_mode = "chat_completions"
+        else:
+            api_key = api_key or settings.openai_api_key
+            api_mode = request.api_mode or settings.default_api_mode
+
+        openai_service = OpenAIService(
+            session_id=request.session_id,
+            base_url=base_url,
+            api_key=api_key,
         )
+
+        if api_mode == "chat_completions":
+            answer_text, sources, reasoning_summary, steps, new_response_id, model_used = (
+                await openai_service.chat_completions(
+                    message=request.message,
+                    mode=request.mode or "both",
+                    days=request.days,
+                    model=model_override,
+                )
+            )
+        else:
+            answer_text, sources, reasoning_summary, steps, new_response_id, model_used = (
+                await openai_service.chat(
+                    message=request.message,
+                    mode=request.mode or "both",
+                    days=request.days,
+                    model=model_override,
+                    previous_response_id=session.get("previous_response_id"),
+                )
+            )
 
         update_session_response_id(request.session_id, new_response_id)
 
@@ -216,17 +422,57 @@ async def chat_stream(request: ChatRequest):
         try:
             add_message(request.session_id, "user", request.message)
 
-            openai_service = OpenAIService(session_id=request.session_id)
+            settings = get_settings()
+
+            base_url = None
+            api_key = request.api_key
+            model_override = request.model
+            provider = request.provider or "openai"
+            
+            if provider == "anthropic":
+                base_url = settings.anthropic_base_url
+                api_key = api_key or settings.anthropic_api_key
+                api_mode = "chat_completions"
+            elif provider == "gemini":
+                base_url = settings.gemini_base_url
+                api_key = api_key or settings.google_api_key
+                api_mode = "chat_completions"
+            elif provider == "custom" and request.custom_model:
+                base_url = request.custom_model.base_url
+                model_override = request.custom_model.model_name
+                if request.custom_model.api_key:
+                    api_key = request.custom_model.api_key
+                api_mode = "chat_completions"
+            else:
+                api_key = api_key or settings.openai_api_key
+                api_mode = request.api_mode or settings.default_api_mode
+
+            openai_service = OpenAIService(
+                session_id=request.session_id,
+                base_url=base_url,
+                api_key=api_key,
+            )
+
             final_answer = ""
             final_sources = []
 
-            async for event in openai_service.chat_stream(
-                message=request.message,
-                mode=request.mode,
-                days=request.days,
-                model=request.model,
-                previous_response_id=session.get("previous_response_id"),
-            ):
+            if api_mode == "chat_completions":
+                stream_method = openai_service.chat_completions_stream(
+                    message=request.message,
+                    mode=request.mode or "both",
+                    days=request.days,
+                    model=model_override,
+                )
+            else:
+                stream_method = openai_service.chat_stream(
+                    message=request.message,
+                    mode=request.mode or "both",
+                    days=request.days,
+                    model=model_override,
+                    previous_response_id=session.get("previous_response_id"),
+                )
+
+            async for event in stream_method:
                 event_type = event.get("event", "message")
                 event_data = event.get("data", {})
 

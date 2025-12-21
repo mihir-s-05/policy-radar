@@ -1,34 +1,35 @@
 # Policy Radar Chatbot
 
-A chatbot for exploring recent U.S. federal regulatory activity using official government APIs.
+A research chatbot for tracking U.S. federal policy activity across multiple official government sources.
 
-## Features
+## Highlights
 
-- **Real-time federal policy search** using Regulations.gov and GovInfo APIs
-- **AI-powered responses** with OpenAI's Responses API and function calling
-- **Live work log** showing tool calls and reasoning as the assistant works
-- **Source cards** with direct links to official documents
-- **Streaming responses** for real-time feedback
-- **Configurable search** by source and time window
-- **PDF extraction + images** from Regulations.gov and GovInfo documents
-- **Session RAG memory** for PDFs with persistent ChromaDB storage
+- Multi-source search across Regulations.gov, GovInfo, Congress.gov, Federal Register, USAspending, Treasury Fiscal Data, data.gov, DOJ press releases, and Search.gov.
+- Multi-provider LLM support: OpenAI (Responses or Chat Completions), Anthropic, Gemini, and OpenAI-compatible custom endpoints.
+- Streaming answers with a live work log of tool calls and citations for each response.
+- Source cards with full-text viewer and PDF extraction support.
+- Session history, editable user messages, and stored sources per conversation.
+- Manuscript-style UI with configurable sources, time window, and model selection.
 
 ## Prerequisites
 
 - Python 3.10+
 - Node.js 18+
-- API Keys:
-  - **GOV_API_KEY**: Get from [api.data.gov](https://api.data.gov/signup/)
-  - **OPENAI_API_KEY**: Get from [OpenAI Platform](https://platform.openai.com/)
+- API keys (see configuration)
 
-## Environment Variables
+## Configuration
+
+### Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GOV_API_KEY` | Yes | - | API key from api.data.gov |
-| `OPENAI_API_KEY` | Yes | - | OpenAI API key |
-| `OPENAI_MODEL` | No | `gpt-5.2` | Chat model |
+| `GOV_API_KEY` | Yes | - | API key used for Regulations.gov, GovInfo, Congress.gov, and data.gov |
+| `OPENAI_API_KEY` | Yes* | - | OpenAI API key (required when using OpenAI provider) |
+| `ANTHROPIC_API_KEY` | No | - | Anthropic API key |
+| `GOOGLE_API_KEY` | No | - | Google Gemini API key |
+| `OPENAI_MODEL` | No | `gpt-5.2` | Default OpenAI model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model for PDF RAG |
+| `DEFAULT_API_MODE` | No | `responses` | OpenAI API mode: `responses` or `chat_completions` |
 | `PORT` | No | `8000` | Backend port |
 | `RAG_PERSIST_DIR` | No | `./chroma` | ChromaDB storage path |
 | `RAG_COLLECTION` | No | `pdf_memory` | ChromaDB collection name |
@@ -36,7 +37,21 @@ A chatbot for exploring recent U.S. federal regulatory activity using official g
 | `RAG_CHUNK_OVERLAP` | No | `200` | PDF chunk overlap (chars) |
 | `RAG_MAX_CHUNKS` | No | `500` | Max chunks per PDF |
 | `RAG_TOP_K` | No | `5` | Retrieval count |
+| `SEARCHGOV_AFFILIATE` | No | - | Search.gov affiliate id |
+| `SEARCHGOV_ACCESS_KEY` | No | - | Search.gov access key |
 | `VITE_API_BASE` | No | `http://localhost:8000` | Frontend API base URL |
+
+\* Required only when using OpenAI as the provider.
+
+### Providers and Settings
+
+The UI settings panel lets you:
+
+- Select a model provider (OpenAI, Anthropic, Gemini, or Custom Endpoint).
+- Switch OpenAI API mode between Responses and Chat Completions.
+- Add or remove provider model names, with validation against provider APIs.
+- Add custom OpenAI-compatible endpoints (vLLM, Ollama, LM Studio, etc.).
+- Override API keys locally (stored in browser local storage).
 
 ## Quick Start
 
@@ -56,35 +71,58 @@ npm run dev
 
 ## Example Prompts
 
-1. **Rulemakings by topic:**
-   - "What major federal rulemakings happened in the last 60 days about asylum?"
-   - "Find recent EPA regulations on water quality."
+1. "Summarize recent EPA rulemakings on emissions in the last 30 days."
+2. "Find Federal Register notices about AI safety from last week."
+3. "Show recent Congress.gov bills related to immigration reform."
+4. "Look up USAspending awards tied to cybersecurity in the last year."
+5. "Find DOJ press releases about antitrust enforcement this month."
 
-2. **Federal Register items:**
-   - "Show recent Federal Register items about immigration this month."
-   - "What are the latest proposed rules on healthcare?"
+## API
 
-3. **Agency-specific:**
-   - "What has the FDA published recently about food safety?"
-   - "Show me recent DOL rulemakings about worker protections."
-
-## API Endpoints
+### Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/session` | POST | Create a new chat session |
-| `/api/chat` | POST | Non-streaming chat (fallback) |
-| `/api/chat/stream` | POST | Streaming chat with SSE |
+| `/api/sessions` | GET | List chat sessions |
+| `/api/sessions/{id}` | DELETE | Delete a chat session |
+| `/api/sessions/{id}/messages` | GET | Fetch messages for a session |
+| `/api/sessions/{id}/messages/{id}` | PATCH | Update a message |
+| `/api/chat` | POST | Non-streaming chat |
+| `/api/chat/stream` | POST | Streaming chat (SSE) |
+| `/api/config` | GET | Provider config, defaults, and available models |
+| `/api/validate-model` | POST | Validate a model name for a provider |
+| `/api/content/fetch` | POST | Fetch full text content for a URL |
 | `/api/health` | GET | Health check |
 
-### Request Format
+### Chat Request (streaming or non-streaming)
 
 ```json
 {
   "session_id": "uuid-string",
   "message": "Your question here",
-  "mode": "both",  // "regulations", "govinfo", or "both"
-  "days": 30       // 7, 30, 60, or 90
+  "mode": "both",
+  "sources": {
+    "regulations": true,
+    "govinfo": true,
+    "congress": false,
+    "federal_register": false,
+    "usaspending": false,
+    "fiscal_data": false,
+    "datagov": false,
+    "doj": false,
+    "searchgov": false
+  },
+  "days": 30,
+  "model": "gpt-5.2",
+  "provider": "openai",
+  "api_mode": "responses",
+  "custom_model": {
+    "base_url": "http://localhost:11434/v1",
+    "model_name": "llama3.2",
+    "api_key": "optional"
+  },
+  "api_key": "optional"
 }
 ```
 
@@ -97,7 +135,7 @@ policy_chatbotv2/
 |   |   |-- api/          # FastAPI routes
 |   |   |-- clients/      # Government API clients + PDF utilities
 |   |   |-- models/       # Pydantic schemas & database
-|   |   |-- services/     # OpenAI service, tool execution, PDF memory
+|   |   |-- services/     # LLM service, tool execution, PDF memory
 |   |   |-- config.py     # Settings from env vars
 |   |   |-- main.py       # FastAPI app
 |   |   `-- __init__.py
@@ -105,11 +143,8 @@ policy_chatbotv2/
 |-- frontend/
 |   |-- src/
 |   |   |-- api/          # API client
-|   |   |-- assets/
-|   |   |-- components/
-|   |   |   `-- ui/
+|   |   |-- components/   # UI components + settings modal
 |   |   |-- hooks/        # Custom React hooks
-|   |   |-- lib/
 |   |   |-- types/        # TypeScript types
 |   |   |-- App.tsx       # Main app
 |   |   |-- index.css
@@ -122,11 +157,11 @@ policy_chatbotv2/
 
 ## Security Notes
 
-- API keys are stored ONLY as environment variables
-- Keys are NEVER exposed to the frontend bundle
-- All API calls to government services are made from the backend
-- SQLite database stores session data locally
-- ChromaDB stores PDF embeddings locally under `RAG_PERSIST_DIR`
+- API keys can be set via environment variables; the UI can override them per provider.
+- Keys are never embedded in the frontend bundle.
+- All government API calls are made from the backend.
+- SQLite stores session data locally.
+- ChromaDB stores PDF embeddings locally under `RAG_PERSIST_DIR`.
 
 ## License
 

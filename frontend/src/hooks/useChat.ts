@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { chatStream, chat } from "../api/client";
-import type { Message, Step, SourceItem, SearchMode } from "../types";
+import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider } from "../types";
 
 interface UseChatOptions {
   sessionId: string | null;
@@ -15,7 +15,17 @@ export function useChat({ sessionId }: UseChatOptions) {
   const [reasoningSummary, setReasoningSummary] = useState<string | null>(null);
 
   const sendMessage = useCallback(
-    async (content: string, mode: SearchMode, days: number, model?: string, overrideSessionId?: string) => {
+    async (
+      content: string,
+      sources: SourceSelection,
+      days: number,
+      model?: string,
+      overrideSessionId?: string,
+      apiMode?: ApiMode,
+      customModel?: CustomModelConfig,
+      apiKey?: string,
+      provider?: ModelProvider
+    ) => {
       const effectiveSessionId = overrideSessionId || sessionId;
       if (!effectiveSessionId || !content.trim()) return;
 
@@ -53,9 +63,13 @@ export function useChat({ sessionId }: UseChatOptions) {
         for await (const event of chatStream({
           session_id: effectiveSessionId,
           message: content,
-          mode,
+          sources,
           days,
-          model,
+          model: customModel?.model_name || model,
+          provider,
+          api_mode: apiMode,
+          custom_model: customModel,
+          api_key: apiKey,
         })) {
           switch (event.type) {
             case "step": {
@@ -66,12 +80,12 @@ export function useChat({ sessionId }: UseChatOptions) {
                   return prev.map((s) =>
                     s.step_id === stepData.step_id
                       ? {
-                          ...s,
-                          ...stepData,
-                          label: stepData.label ?? s.label,
-                          tool_name: stepData.tool_name ?? s.tool_name,
-                          args: stepData.args ?? s.args,
-                        }
+                        ...s,
+                        ...stepData,
+                        label: stepData.label ?? s.label,
+                        tool_name: stepData.tool_name ?? s.tool_name,
+                        args: stepData.args ?? s.args,
+                      }
                       : s
                   );
                 }
@@ -125,14 +139,14 @@ export function useChat({ sessionId }: UseChatOptions) {
           prev.map((m) =>
             m.id === assistantId
               ? {
-                  ...m,
-                  content: finalContent,
-                  sources: finalSources,
-                  steps: finalSteps,
-                  reasoning_summary: finalReasoning || undefined,
-                  isStreaming: false,
-                  model: finalModel,
-                }
+                ...m,
+                content: finalContent,
+                sources: finalSources,
+                steps: finalSteps,
+                reasoning_summary: finalReasoning || undefined,
+                isStreaming: false,
+                model: finalModel,
+              }
               : m
           )
         );
@@ -143,23 +157,27 @@ export function useChat({ sessionId }: UseChatOptions) {
           const response = await chat({
             session_id: effectiveSessionId,
             message: content,
-            mode,
+            sources,
             days,
-            model,
+            model: customModel?.model_name || model,
+            provider,
+            api_mode: apiMode,
+            custom_model: customModel,
+            api_key: apiKey,
           });
 
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
                 ? {
-                    ...m,
-                    content: response.answer_text,
-                    sources: response.sources,
-                    steps: response.steps,
-                    reasoning_summary: response.reasoning_summary,
-                    isStreaming: false,
-                    model: response.model,
-                  }
+                  ...m,
+                  content: response.answer_text,
+                  sources: response.sources,
+                  steps: response.steps,
+                  reasoning_summary: response.reasoning_summary,
+                  isStreaming: false,
+                  model: response.model,
+                }
                 : m
             )
           );

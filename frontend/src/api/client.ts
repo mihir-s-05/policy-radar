@@ -14,6 +14,8 @@ import type {
   UpdateMessageRequest,
   UpdateMessageResponse,
   ConfigResponse,
+  ValidateModelRequest,
+  ValidateModelResponse,
 } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -133,6 +135,25 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
     throw new Error(error.detail || `Chat request failed: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function validateModel(
+  request: ValidateModelRequest
+): Promise<ValidateModelResponse> {
+  const response = await fetch(`${API_BASE}/api/validate-model`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Validation request failed: ${response.statusText}`);
   }
 
   return response.json();

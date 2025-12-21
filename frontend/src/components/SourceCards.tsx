@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, FileText, AlertTriangle, Loader2 } from "lucide-react";
+import { ExternalLink, AlertTriangle, Loader2, Scroll } from "lucide-react";
 import { fetchContent } from "../api/client";
 import type { SourceItem } from "../types";
 import { Button } from "./ui/Button";
@@ -22,18 +22,34 @@ function getSourceTypeLabel(type: string): string {
     regulations_docket: "Regulations.gov Docket",
     govinfo_result: "GovInfo",
     govinfo_package: "GovInfo Package",
+    congress_bill: "Congress Bill",
+    congress_vote: "Congress Vote",
+    federal_register: "Federal Register",
+    usaspending: "USAspending",
+    fiscal_data: "Treasury Fiscal Data",
+    datagov: "data.gov",
+    doj_press_release: "DOJ Press Release",
+    searchgov: "Search.gov",
   };
   return labels[type] || type;
 }
 
 function getSourceTypeColorClass(type: string): string {
   const colors: Record<string, string> = {
-    regulations_document: "bg-zinc-500/10 text-zinc-100 border-zinc-500/20",
-    regulations_docket: "bg-zinc-500/10 text-zinc-300 border-zinc-500/20",
-    govinfo_result: "bg-zinc-500/10 text-zinc-200 border-zinc-500/20",
-    govinfo_package: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
+    regulations_document: "bg-parchment-300/50 text-leather border-sepia-light/40",
+    regulations_docket: "bg-parchment-300/50 text-leather border-sepia-light/40",
+    govinfo_result: "bg-parchment-200/50 text-leather-light border-sepia-light/30",
+    govinfo_package: "bg-parchment-200/50 text-leather-light border-sepia-light/30",
+    congress_bill: "bg-parchment-300/60 text-sepia-brown border-sepia-accent/40",
+    congress_vote: "bg-parchment-300/60 text-sepia-brown border-sepia-accent/40",
+    federal_register: "bg-parchment-400/30 text-leather border-leather-light/40",
+    usaspending: "bg-parchment-300/40 text-sepia-brown border-sepia-light/30",
+    fiscal_data: "bg-parchment-300/40 text-sepia-brown border-sepia-light/30",
+    datagov: "bg-parchment-200/40 text-leather-light border-sepia-light/25",
+    doj_press_release: "bg-parchment-300/50 text-leather border-leather-light/30",
+    searchgov: "bg-parchment-200/40 text-leather-light border-sepia-light/25",
   };
-  return colors[type] || "bg-zinc-800/50 text-zinc-500 border-zinc-800";
+  return colors[type] || "bg-parchment-200/30 text-leather-light border-sepia-light/20";
 }
 
 function formatDate(dateStr: string | null): string {
@@ -54,36 +70,51 @@ function SourceCard({
   onView: () => void;
 }) {
   return (
-    <div className="bg-metal-brushed flex flex-col gap-3 rounded-lg border border-black/20 p-4 shadow-lg transition-all hover:scale-[1.01] hover:shadow-xl">
+    <div className="parchment-bg aged-edge flex flex-col gap-3 rounded-lg border border-sepia-light/40 p-4 shadow-parchment transition-all hover:scale-[1.01] hover:shadow-lg">
       <div className="flex items-center justify-between">
         <span
           className={cn(
             "rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
             getSourceTypeColorClass(source.source_type)
           )}
+          style={{ fontFamily: "'IM Fell English SC', serif" }}
         >
           {getSourceTypeLabel(source.source_type)}
         </span>
         {source.date && (
-          <span className="text-xs text-muted-foreground">
+          <span
+            className="text-xs ink-faded"
+            style={{ fontFamily: "'Spectral', serif" }}
+          >
             {formatDate(source.date)}
           </span>
         )}
       </div>
 
       <h4
-        className="line-clamp-2 text-sm font-semibold leading-tight tracking-tight"
+        className="line-clamp-2 text-sm font-semibold leading-tight tracking-tight ink-text"
         title={source.title}
+        style={{ fontFamily: "'IM Fell English', serif" }}
       >
         {source.title}
       </h4>
 
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {source.agency && <span className="font-medium">{source.agency}</span>}
+      <div className="flex items-center gap-2 text-xs ink-faded">
+        {source.agency && (
+          <span
+            className="font-medium"
+            style={{ fontFamily: "'IM Fell English SC', serif", letterSpacing: "0.03em" }}
+          >
+            {source.agency}
+          </span>
+        )}
       </div>
 
       {source.excerpt && (
-        <p className="line-clamp-2 text-xs text-muted-foreground/80">
+        <p
+          className="line-clamp-2 text-xs ink-faded"
+          style={{ fontFamily: "'Spectral', serif", fontStyle: "italic" }}
+        >
           {source.excerpt}
         </p>
       )}
@@ -92,15 +123,15 @@ function SourceCard({
         <Button
           variant="secondary"
           size="sm"
-          className="h-7 w-full text-xs"
+          className="h-7 w-full text-xs btn-parchment"
           onClick={onView}
         >
-          View Content
+          <span style={{ fontFamily: "'IM Fell English SC', serif" }}>View Document</span>
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-muted-foreground"
+          className="h-7 w-7 ink-faded hover:ink-text"
           asChild
         >
           <a
@@ -179,21 +210,32 @@ export function SourceCards({ sources }: SourceCardsProps) {
 
   if (sources.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
-        <div className="mb-2 rounded-full bg-muted p-3">
-          <FileText className="h-5 w-5 opacity-50" />
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <div className="mb-2 rounded-full parchment-bg p-3 border border-sepia-light/30">
+          <Scroll className="h-5 w-5 ink-faded opacity-50" />
         </div>
-        <p className="text-sm">Relevant documents will appear here.</p>
+        <p
+          className="text-sm ink-faded"
+          style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+        >
+          Referenced documents will appear here.
+        </p>
       </div>
     );
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b bg-card px-4 py-3">
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
-          Sources
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+      <div className="border-b border-sepia-light/30 bg-card px-4 py-3">
+        <h3
+          className="flex items-center gap-2 text-sm font-semibold ink-text"
+          style={{ fontFamily: "'IM Fell English SC', serif", letterSpacing: "0.05em" }}
+        >
+          Referenced Documents
+          <span
+            className="rounded-full parchment-bg px-2 py-0.5 text-[10px] ink-faded border border-sepia-light/30"
+            style={{ fontFamily: "'Spectral', serif" }}
+          >
             {sources.length}
           </span>
         </h3>
@@ -214,11 +256,14 @@ export function SourceCards({ sources }: SourceCardsProps) {
         open={!!contentState?.isOpen}
         onOpenChange={handleOpenChange}
       >
-        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0 sm:max-w-3xl">
-          <DialogHeader className="border-b p-6">
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0 sm:max-w-3xl parchment-bg border-sepia-light/50">
+          <DialogHeader className="border-b border-sepia-light/30 p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1 pr-8">
-                <DialogTitle className="line-clamp-2 text-lg">
+                <DialogTitle
+                  className="line-clamp-2 text-lg ink-text"
+                  style={{ fontFamily: "'IM Fell English', serif" }}
+                >
                   {contentState?.title || "Document Content"}
                 </DialogTitle>
                 {contentState?.url && (
@@ -227,7 +272,8 @@ export function SourceCards({ sources }: SourceCardsProps) {
                       href={contentState.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="hover:text-primary hover:underline"
+                      className="hover:text-sepia-brown hover:underline ink-faded"
+                      style={{ fontFamily: "'Spectral', serif", fontSize: "0.75rem" }}
                     >
                       {contentState.url}
                     </a>
@@ -239,24 +285,37 @@ export function SourceCards({ sources }: SourceCardsProps) {
 
           <div className="custom-scrollbar flex-1 overflow-y-auto p-6">
             {contentState?.isLoading ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-4 text-muted-foreground">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p>Extracting content from source...</p>
+              <div className="flex h-60 flex-col items-center justify-center gap-4 ink-faded">
+                <Loader2 className="h-8 w-8 animate-spin text-sepia-brown" />
+                <p style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}>
+                  Transcribing document from source...
+                </p>
               </div>
             ) : contentState?.error ? (
               <div className="flex h-60 flex-col items-center justify-center gap-4 text-destructive">
                 <AlertTriangle className="h-8 w-8" />
-                <p className="text-center">{contentState.error}</p>
+                <p
+                  className="text-center"
+                  style={{ fontFamily: "'IM Fell English', serif" }}
+                >
+                  {contentState.error}
+                </p>
               </div>
             ) : contentState?.text ? (
-              <div className="prose prose-sm prose-invert max-w-none">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-muted-foreground">
+              <div className="prose-manuscript max-w-none">
+                <pre
+                  className="whitespace-pre-wrap text-sm leading-relaxed ink-text"
+                  style={{ fontFamily: "'Spectral', serif" }}
+                >
                   {contentState.text}
                 </pre>
               </div>
             ) : (
-              <div className="flex h-60 items-center justify-center text-muted-foreground">
-                No extracted text available.
+              <div
+                className="flex h-60 items-center justify-center ink-faded"
+                style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+              >
+                No transcribed text available.
               </div>
             )}
           </div>

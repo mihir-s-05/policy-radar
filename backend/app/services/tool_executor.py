@@ -6,6 +6,13 @@ from typing import Optional
 from ..clients.regulations import RegulationsClient, get_date_range
 from ..clients.govinfo import GovInfoClient, build_govinfo_query
 from ..clients.web_fetcher import WebFetcher
+from ..clients.congress import CongressClient
+from ..clients.federal_register import FederalRegisterClient
+from ..clients.usaspending import USASpendingClient
+from ..clients.fiscal_data import FiscalDataClient
+from ..clients.datagov import DataGovClient
+from ..clients.doj import DOJClient
+from ..clients.searchgov import SearchGovClient
 from ..models.schemas import SourceItem, Step
 from .pdf_memory import get_pdf_memory_store
 
@@ -17,6 +24,13 @@ class ToolExecutor:
         self.regulations_client = RegulationsClient()
         self.govinfo_client = GovInfoClient()
         self.web_fetcher = WebFetcher()
+        self.congress_client = CongressClient()
+        self.federal_register_client = FederalRegisterClient()
+        self.usaspending_client = USASpendingClient()
+        self.fiscal_data_client = FiscalDataClient()
+        self.datagov_client = DataGovClient()
+        self.doj_client = DOJClient()
+        self.searchgov_client = SearchGovClient()
         self._all_sources: list[SourceItem] = []
         self.session_id = session_id
         self.pdf_memory = get_pdf_memory_store()
@@ -123,6 +137,22 @@ class ToolExecutor:
                 return await self._exec_fetch_url_content(args)
             elif tool_name == "search_pdf_memory":
                 return await self._exec_search_pdf_memory(args)
+            elif tool_name == "congress_search_bills":
+                return await self._exec_congress_search_bills(args)
+            elif tool_name == "congress_search_votes":
+                return await self._exec_congress_search_votes(args)
+            elif tool_name == "federal_register_search":
+                return await self._exec_federal_register_search(args)
+            elif tool_name == "usaspending_search":
+                return await self._exec_usaspending_search(args)
+            elif tool_name == "fiscal_data_query":
+                return await self._exec_fiscal_data_query(args)
+            elif tool_name == "datagov_search":
+                return await self._exec_datagov_search(args)
+            elif tool_name == "doj_search":
+                return await self._exec_doj_search(args)
+            elif tool_name == "searchgov_search":
+                return await self._exec_searchgov_search(args)
             else:
                 return {"error": f"Unknown tool: {tool_name}"}, None
 
@@ -578,6 +608,290 @@ class ToolExecutor:
 
         return result, preview
 
+    async def _exec_congress_search_bills(self, args: dict) -> tuple[dict, dict]:
+        query = args.get("query", "")
+        congress = args.get("congress")
+        limit = args.get("limit", 10)
+
+        bills, sources = await self.congress_client.search_bills(
+            query=query,
+            congress=congress,
+            limit=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(bills),
+            "bills": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "date": s.date,
+                    "url": s.url,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(bills),
+            "top_titles": [s.title[:80] for s in sources[:3]],
+        }
+
+        return result, preview
+
+    async def _exec_congress_search_votes(self, args: dict) -> tuple[dict, dict]:
+        chamber = args.get("chamber", "house")
+        congress = args.get("congress")
+        limit = args.get("limit", 10)
+
+        votes, sources = await self.congress_client.search_votes(
+            chamber=chamber,
+            congress=congress,
+            limit=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(votes),
+            "votes": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "date": s.date,
+                    "url": s.url,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(votes),
+            "top_titles": [s.title[:80] for s in sources[:3]],
+        }
+
+        return result, preview
+
+    async def _exec_federal_register_search(self, args: dict) -> tuple[dict, dict]:
+        query = args.get("query", "")
+        document_type = args.get("document_type")
+        days = args.get("days", 30)
+        limit = args.get("limit", 10)
+
+        documents, sources = await self.federal_register_client.search_documents(
+            query=query,
+            document_type=document_type,
+            days=days,
+            per_page=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(documents),
+            "documents": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "date": s.date,
+                    "url": s.url,
+                    "pdf_url": s.pdf_url,
+                    "type": s.content_type,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(documents),
+            "top_titles": [s.title[:80] for s in sources[:3]],
+        }
+
+        return result, preview
+
+    async def _exec_usaspending_search(self, args: dict) -> tuple[dict, dict]:
+        keywords = args.get("keywords", [])
+        agency = args.get("agency")
+        award_type = args.get("award_type")
+        days = args.get("days", 365)
+        limit = args.get("limit", 10)
+
+        results, sources, brief = await self.usaspending_client.search_spending(
+            keywords=keywords if keywords else None,
+            agency=agency,
+            award_type=award_type,
+            days=days,
+            limit=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(results),
+            "summary": brief,
+            "awards": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "agency": s.agency,
+                    "date": s.date,
+                    "url": s.url,
+                    "excerpt": s.excerpt,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(results),
+            "top_recipients": [s.title[:60] for s in sources[:3]],
+        }
+
+        return result, preview
+
+    async def _exec_fiscal_data_query(self, args: dict) -> tuple[dict, dict]:
+        dataset = args.get("dataset", "debt_to_penny")
+        limit = args.get("limit", 10)
+
+        records, sources, brief = await self.fiscal_data_client.query_dataset(
+            dataset=dataset,
+            page_size=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(records),
+            "dataset": dataset,
+            "summary": brief,
+            "records": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "date": s.date,
+                    "url": s.url,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(records),
+            "dataset": dataset,
+        }
+
+        return result, preview
+
+    async def _exec_datagov_search(self, args: dict) -> tuple[dict, dict]:
+        query = args.get("query", "")
+        organization = args.get("organization")
+        res_format = args.get("format")
+        limit = args.get("limit", 10)
+
+        datasets, sources = await self.datagov_client.search_datasets(
+            query=query,
+            organization=organization,
+            res_format=res_format,
+            rows=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(datasets),
+            "datasets": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "agency": s.agency,
+                    "date": s.date,
+                    "url": s.url,
+                    "excerpt": (s.excerpt[:200] + "...") if s.excerpt and len(s.excerpt) > 200 else s.excerpt,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(datasets),
+            "top_titles": [s.title[:80] for s in sources[:3]],
+        }
+
+        return result, preview
+
+    async def _exec_doj_search(self, args: dict) -> tuple[dict, dict]:
+        query = args.get("query")
+        component = args.get("component")
+        days = args.get("days", 30)
+        limit = args.get("limit", 10)
+
+        releases, sources = await self.doj_client.search_press_releases(
+            query=query,
+            component=component,
+            days=days,
+            limit=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(releases),
+            "press_releases": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "date": s.date,
+                    "url": s.url,
+                    "excerpt": (s.excerpt[:200] + "...") if s.excerpt and len(s.excerpt) > 200 else s.excerpt,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(releases),
+            "top_titles": [s.title[:80] for s in sources[:3]],
+        }
+
+        return result, preview
+
+    async def _exec_searchgov_search(self, args: dict) -> tuple[dict, dict]:
+        query = args.get("query", "")
+        limit = args.get("limit", 10)
+
+        if not self.searchgov_client.is_configured:
+            return {
+                "error": "Search.gov is not configured. Set SEARCHGOV_AFFILIATE and SEARCHGOV_ACCESS_KEY environment variables."
+            }, {"error": "Not configured"}
+
+        results, sources = await self.searchgov_client.search(
+            query=query,
+            limit=limit,
+        )
+
+        self._all_sources.extend(sources)
+
+        result = {
+            "count": len(results),
+            "results": [
+                {
+                    "title": s.title,
+                    "url": s.url,
+                    "excerpt": s.excerpt,
+                }
+                for s in sources
+            ],
+        }
+
+        preview = {
+            "count": len(results),
+            "top_titles": [s.title[:80] for s in sources[:3]],
+        }
+
+        return result, preview
+
 
 def get_tool_label(tool_name: str, args: dict) -> str:
     labels = {
@@ -590,5 +904,13 @@ def get_tool_label(tool_name: str, args: dict) -> str:
         "govinfo_read_package_content": f"Read package content: {args.get('package_id', '')}",
         "fetch_url_content": f"Fetch URL: {args.get('url', '')[:50]}",
         "search_pdf_memory": f"Search PDF memory: {args.get('query', '')[:50]}",
+        "congress_search_bills": f"Search Congress bills: {args.get('query', '')}",
+        "congress_search_votes": f"Search Congress votes: {args.get('chamber', 'house')}",
+        "federal_register_search": f"Search Federal Register: {args.get('query', '')}",
+        "usaspending_search": f"Search USAspending: {args.get('keywords', '')}",
+        "fiscal_data_query": f"Query Fiscal Data: {args.get('dataset', 'debt_to_penny')}",
+        "datagov_search": f"Search data.gov: {args.get('query', '')}",
+        "doj_search": f"Search DOJ: {args.get('query', '')}",
+        "searchgov_search": f"Search Search.gov: {args.get('query', '')}",
     }
     return labels.get(tool_name, f"Execute: {tool_name}")

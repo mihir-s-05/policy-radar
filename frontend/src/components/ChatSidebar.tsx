@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Trash2, MessageSquare, Calendar, AlertTriangle, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Plus, Trash2, Scroll, Calendar, AlertTriangle, PanelLeftClose, PanelLeft } from "lucide-react";
 import type { SessionInfo } from "../types";
 import { Button } from "./ui/Button";
 import {
@@ -75,11 +75,11 @@ export function ChatSidebar({
   if (isCollapsed) {
     return (
       <>
-        <aside className="bg-metal-glass flex flex-col items-center gap-2 overflow-hidden rounded-xl border border-zinc-800/50 text-card-foreground shadow-2xl py-3 transition-all duration-300">
+        <aside className="leather-bg flex flex-col items-center gap-2 overflow-hidden rounded-xl border border-leather-dark/50 text-parchment-100 shadow-leather py-3 transition-all duration-300">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-7 w-7 text-parchment-200 hover:bg-leather-light/30 hover:text-parchment-100"
             onClick={onToggleCollapse}
             aria-label="Expand sidebar"
           >
@@ -88,9 +88,8 @@ export function ChatSidebar({
           <Button
             onClick={onNewChat}
             disabled={isBusy}
-            variant="chrome"
+            className="btn-wax h-8 w-8"
             size="icon"
-            className="h-8 w-8"
             aria-label="New Chat"
           >
             <Plus className="h-4 w-4" />
@@ -104,14 +103,14 @@ export function ChatSidebar({
                   variant="ghost"
                   size="icon"
                   className={cn(
-                    "h-8 w-8",
-                    isActive && "bg-accent text-accent-foreground"
+                    "h-8 w-8 text-parchment-200 hover:bg-leather-light/30",
+                    isActive && "bg-leather-light/40 text-parchment-100"
                   )}
                   onClick={() => onSelect(session.session_id)}
                   disabled={isBusy}
                   aria-label={formatTitle(session)}
                 >
-                  <MessageSquare className="h-4 w-4" />
+                  <Scroll className="h-4 w-4" />
                 </Button>
               );
             })}
@@ -123,16 +122,19 @@ export function ChatSidebar({
 
   return (
     <>
-      <aside className="bg-metal-glass flex flex-col gap-4 overflow-hidden rounded-xl border border-zinc-800/50 text-card-foreground shadow-2xl transition-all duration-300">
-        <div className="flex flex-col gap-4 border-b border-white/5 p-4">
+      <aside className="leather-bg flex flex-col gap-4 overflow-hidden rounded-xl border border-leather-dark/50 text-parchment-100 shadow-leather transition-all duration-300">
+        <div className="flex flex-col gap-4 border-b border-parchment-200/10 p-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-embossed text-lg font-bold leading-none tracking-tight">
-              Policy Radar
+            <h3
+              className="text-lg font-bold leading-none tracking-wider text-parchment-100"
+              style={{ fontFamily: "'IM Fell English SC', serif", letterSpacing: "0.1em" }}
+            >
+              Policy Archives
             </h3>
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-7 w-7 text-parchment-200 hover:bg-leather-light/30 hover:text-parchment-100"
               onClick={onToggleCollapse}
               aria-label="Collapse sidebar"
             >
@@ -142,28 +144,36 @@ export function ChatSidebar({
           <Button
             onClick={onNewChat}
             disabled={isBusy}
-            variant="chrome"
-            className="w-full justify-start gap-2"
+            className="btn-wax w-full justify-start gap-2"
             size="sm"
           >
             <Plus className="h-4 w-4" />
-            New Chat
+            <span style={{ fontFamily: "'IM Fell English SC', serif" }}>New Inquiry</span>
           </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2">
           {isLoading ? (
-            <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
+            <div
+              className="flex h-20 items-center justify-center text-sm text-parchment-300"
+              style={{ fontFamily: "'IM Fell English', serif" }}
+            >
               Loading...
             </div>
           ) : sessions.length === 0 ? (
-            <div className="flex h-20 items-center justify-center text-sm text-muted-foreground">
-              No recent chats
+            <div
+              className="flex h-20 items-center justify-center text-sm text-parchment-400"
+              style={{ fontFamily: "'IM Fell English', serif" }}
+            >
+              No archived inquiries
             </div>
           ) : (
             <div className="flex flex-col gap-1">
-              <h3 className="px-2 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Run History
+              <h3
+                className="px-2 py-2 text-xs font-semibold uppercase tracking-widest text-parchment-400"
+                style={{ fontFamily: "'IM Fell English SC', serif" }}
+              >
+                Previous Inquiries
               </h3>
               <ul className="flex flex-col gap-1">
                 {sessions.map((session) => {
@@ -174,21 +184,24 @@ export function ChatSidebar({
                         onClick={() => onSelect(session.session_id)}
                         disabled={isBusy}
                         className={cn(
-                          "flex w-full flex-col gap-1 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50",
+                          "flex w-full flex-col gap-1 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-leather-light/30 disabled:opacity-50",
                           isActive
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground"
+                            ? "bg-leather-light/40 text-parchment-100"
+                            : "text-parchment-300"
                         )}
                       >
                         <div className="flex items-center gap-2">
-                          <MessageSquare className="h-3 w-3 opacity-70" />
-                          <span className="truncate font-medium">
+                          <Scroll className="h-3 w-3 opacity-70" />
+                          <span
+                            className="truncate font-medium"
+                            style={{ fontFamily: "'IM Fell English', serif" }}
+                          >
                             {formatTitle(session)}
                           </span>
                         </div>
                         <div className="flex items-center gap-1 text-xs opacity-60">
                           <Calendar className="h-3 w-3" />
-                          <span>
+                          <span style={{ fontFamily: "'Spectral', serif" }}>
                             {formatDate(
                               session.last_message_at || session.created_at
                             )}
@@ -198,7 +211,7 @@ export function ChatSidebar({
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground focus:opacity-100"
+                        className="absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 text-parchment-300 hover:bg-destructive hover:text-destructive-foreground focus:opacity-100"
                         onClick={(e) => handleDeleteClick(e, session.session_id)}
                         disabled={isBusy}
                         aria-label="Delete chat"
@@ -215,21 +228,27 @@ export function ChatSidebar({
       </aside>
 
       <Dialog open={!!sessionToDelete} onOpenChange={(open) => !open && setSessionToDelete(null)}>
-        <DialogContent>
+        <DialogContent className="parchment-bg border-sepia-light/50">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle
+              className="flex items-center gap-2 ink-text"
+              style={{ fontFamily: "'IM Fell English SC', serif" }}
+            >
               <AlertTriangle className="h-5 w-5 text-destructive" />
-              Delete Chat
+              Delete Inquiry
             </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this chat session? This action cannot be undone.
+            <DialogDescription
+              className="ink-faded"
+              style={{ fontFamily: "'IM Fell English', serif" }}
+            >
+              Are you certain you wish to remove this archived inquiry? This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
+              <Button variant="outline" className="btn-parchment">Cancel</Button>
             </DialogClose>
-            <Button variant="destructive" onClick={confirmDelete}>
+            <Button variant="destructive" onClick={confirmDelete} className="btn-wax">
               Delete
             </Button>
           </DialogFooter>

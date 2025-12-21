@@ -8,6 +8,14 @@ class SourceItem(BaseModel):
         "regulations_docket",
         "govinfo_result",
         "govinfo_package",
+        "congress_bill",
+        "congress_vote",
+        "federal_register",
+        "usaspending",
+        "fiscal_data",
+        "datagov",
+        "doj_press_release",
+        "searchgov",
     ]
     id: str
     title: str
@@ -15,6 +23,27 @@ class SourceItem(BaseModel):
     date: Optional[str] = None
     url: str
     excerpt: Optional[str] = None
+    pdf_url: Optional[str] = None
+    content_type: Optional[str] = None
+    raw: Optional[dict] = None
+
+
+class SourceSelection(BaseModel):
+    govinfo: bool = True
+    regulations: bool = True
+    congress: bool = False
+    federal_register: bool = False
+    usaspending: bool = False
+    fiscal_data: bool = False
+    datagov: bool = False
+    doj: bool = False
+    searchgov: bool = False
+
+
+class CustomModelConfig(BaseModel):
+    base_url: str
+    model_name: str
+    api_key: Optional[str] = None
 
 
 class Step(BaseModel):
@@ -29,9 +58,14 @@ class Step(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str
     message: str
-    mode: Literal["regulations", "govinfo", "both"] = "both"
+    mode: Optional[Literal["regulations", "govinfo", "both"]] = None
+    sources: Optional[SourceSelection] = None
     days: int = Field(default=30, ge=7, le=90)
     model: Optional[str] = None
+    provider: Optional[Literal["openai", "anthropic", "gemini", "custom"]] = None
+    api_mode: Optional[Literal["responses", "chat_completions"]] = None
+    custom_model: Optional[CustomModelConfig] = None
+    api_key: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -97,9 +131,32 @@ class UpdateMessageResponse(BaseModel):
     updated: bool
 
 
+class ProviderInfo(BaseModel):
+    name: str
+    display_name: str
+    base_url: str
+    models: list[str] = Field(default_factory=list)
+    api_key_detected: bool = False
+    api_mode: Literal["responses", "chat_completions"] = "chat_completions"
+
+
 class ConfigResponse(BaseModel):
     model: str
     available_models: list[str] = Field(default_factory=list)
+    default_api_mode: Literal["responses", "chat_completions"] = "responses"
+    providers: dict[str, ProviderInfo] = Field(default_factory=dict)
+
+
+class ValidateModelRequest(BaseModel):
+    provider: Literal["openai", "anthropic", "gemini", "custom"]
+    model_name: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+class ValidateModelResponse(BaseModel):
+    valid: bool
+    message: str
 
 
 class StepEvent(BaseModel):

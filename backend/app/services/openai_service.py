@@ -231,14 +231,238 @@ TOOLS = [
             },
             "required": ["query"]
         }
+    },
+    {
+        "type": "function",
+        "name": "congress_search_bills",
+        "description": "Search Congress.gov for bills and legislation. Returns bill titles, numbers, sponsors, and status.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords for bills (e.g., 'immigration reform', 'tax credit')"
+                },
+                "congress": {
+                    "type": "integer",
+                    "description": "Congress number (e.g., 118 for 118th Congress). Defaults to current.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results to return",
+                    "default": 10
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "congress_search_votes",
+        "description": "Search Congress.gov for roll call votes. Returns vote results and which members voted yea/nay.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chamber": {
+                    "type": "string",
+                    "description": "Congressional chamber: 'house' or 'senate'",
+                    "enum": ["house", "senate"],
+                    "default": "house"
+                },
+                "congress": {
+                    "type": "integer",
+                    "description": "Congress number (defaults to 118)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results",
+                    "default": 10
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "federal_register_search",
+        "description": "Search the Federal Register for rules, proposed rules, notices, and presidential documents. No API key required.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords"
+                },
+                "document_type": {
+                    "type": "string",
+                    "description": "Filter by type: RULE, PRORULE (proposed rule), NOTICE, or PRESDOCU (presidential)",
+                    "enum": ["RULE", "PRORULE", "NOTICE", "PRESDOCU"]
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to look back",
+                    "default": 30
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results",
+                    "default": 10
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "usaspending_search",
+        "description": "Search USAspending.gov for federal spending, contracts, grants, and awards. Returns a markdown summary suitable for analysis.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Search keywords (e.g., ['defense', 'aircraft'])"
+                },
+                "agency": {
+                    "type": "string",
+                    "description": "Filter by awarding agency name"
+                },
+                "award_type": {
+                    "type": "string",
+                    "description": "Type of award: 'contracts', 'grants', 'loans', or 'direct_payments'",
+                    "enum": ["contracts", "grants", "loans", "direct_payments"]
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to look back",
+                    "default": 365
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results",
+                    "default": 10
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "fiscal_data_query",
+        "description": "Query Treasury Fiscal Data API for debt, interest rates, receipts, and outlays. Returns a markdown summary.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dataset": {
+                    "type": "string",
+                    "description": "Dataset to query",
+                    "enum": ["debt_to_penny", "interest_rates", "monthly_receipts", "monthly_outlays"],
+                    "default": "debt_to_penny"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of records",
+                    "default": 10
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "datagov_search",
+        "description": "Search data.gov for government datasets. Returns dataset titles, descriptions, and resource links.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords (e.g., 'climate data', 'census')"
+                },
+                "organization": {
+                    "type": "string",
+                    "description": "Filter by organization/agency"
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Filter by resource format (CSV, JSON, PDF, etc.)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results",
+                    "default": 10
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "doj_search",
+        "description": "Search Department of Justice press releases and news.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords"
+                },
+                "component": {
+                    "type": "string",
+                    "description": "DOJ component (e.g., 'fbi', 'dea', 'civil-rights')"
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to look back",
+                    "default": 30
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results",
+                    "default": 10
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "searchgov_search",
+        "description": "Search across government websites using Search.gov. Only available if configured with SEARCHGOV_AFFILIATE and SEARCHGOV_ACCESS_KEY.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of results",
+                    "default": 10
+                }
+            },
+            "required": ["query"]
+        }
     }
 ]
 
 
+
 class OpenAIService:
-    def __init__(self, session_id: Optional[str] = None):
+    def __init__(
+        self,
+        session_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
         settings = get_settings()
-        self.client = OpenAI(api_key=settings.openai_api_key)
+        effective_api_key = api_key or settings.openai_api_key
+        if base_url:
+            self.client = OpenAI(api_key=effective_api_key, base_url=base_url)
+        else:
+            self.client = OpenAI(api_key=effective_api_key)
         self.model = settings.openai_model
         self.tool_executor = ToolExecutor(session_id=session_id)
 
@@ -423,6 +647,200 @@ Please search for relevant information and provide a comprehensive answer with c
             return govinfo_tools + fetch_url_tool + memory_tool
         else:
             return TOOLS
+
+    def _convert_tools_for_chat_completions(self, tools: list[dict]) -> list[dict]:
+        converted = []
+        for tool in tools:
+            converted.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("parameters", {"type": "object", "properties": {}})
+                }
+            })
+        return converted
+
+    async def chat_completions(
+        self,
+        message: str,
+        mode: str,
+        days: int,
+        model: Optional[str] = None,
+    ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str, str]:
+        self.tool_executor.clear_sources()
+        steps: list[Step] = []
+        step_counter = 0
+
+        model_to_use = model or self.model
+        formatted_message = self._format_user_message(message, mode, days)
+        available_tools = self._get_available_tools(mode)
+        chat_tools = self._convert_tools_for_chat_completions(available_tools)
+
+        messages = [
+            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+            {"role": "user", "content": formatted_message}
+        ]
+
+        response = self.client.chat.completions.create(
+            model=model_to_use,
+            messages=messages,
+            tools=chat_tools if chat_tools else None,
+            tool_choice="auto" if chat_tools else None,
+        )
+
+        reasoning_summary = None
+
+        while response.choices[0].message.tool_calls:
+            tool_calls = response.choices[0].message.tool_calls
+            messages.append(response.choices[0].message)
+
+            for call in tool_calls:
+                step_counter += 1
+                step_id = str(step_counter)
+                tool_name = call.function.name
+                args = json.loads(call.function.arguments)
+
+                if tool_name in ("regs_search_documents", "govinfo_search") and "days" not in args:
+                    args["days"] = days
+
+                step = Step(
+                    step_id=step_id,
+                    status="running",
+                    label=get_tool_label(tool_name, args),
+                    tool_name=tool_name,
+                    args=args,
+                )
+                steps.append(step)
+
+                result, preview = await self.tool_executor.execute_tool(tool_name, args)
+                safe_result, _ = self._prepare_tool_output(tool_name, result)
+
+                step.status = "done" if "error" not in safe_result else "error"
+                step.result_preview = preview
+                if tool_name == "search_pdf_memory":
+                    step.label = self._format_pdf_search_label(args.get("query", ""), preview)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": json.dumps(safe_result),
+                })
+
+            response = self.client.chat.completions.create(
+                model=model_to_use,
+                messages=messages,
+                tools=chat_tools if chat_tools else None,
+                tool_choice="auto" if chat_tools else None,
+            )
+
+        answer_text = response.choices[0].message.content or ""
+        sources = self.tool_executor.get_collected_sources()
+
+        return answer_text, sources, reasoning_summary, steps, response.id or "", model_to_use
+
+    async def chat_completions_stream(
+        self,
+        message: str,
+        mode: str,
+        days: int,
+        model: Optional[str] = None,
+    ) -> AsyncGenerator[dict, None]:
+        self.tool_executor.clear_sources()
+        step_counter = 0
+
+        model_to_use = model or self.model
+        formatted_message = self._format_user_message(message, mode, days)
+        available_tools = self._get_available_tools(mode)
+        chat_tools = self._convert_tools_for_chat_completions(available_tools)
+
+        messages = [
+            {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+            {"role": "user", "content": formatted_message}
+        ]
+
+        response = self.client.chat.completions.create(
+            model=model_to_use,
+            messages=messages,
+            tools=chat_tools if chat_tools else None,
+            tool_choice="auto" if chat_tools else None,
+        )
+
+        while response.choices[0].message.tool_calls:
+            tool_calls = response.choices[0].message.tool_calls
+            messages.append(response.choices[0].message)
+
+            for call in tool_calls:
+                step_counter += 1
+                step_id = str(step_counter)
+                tool_name = call.function.name
+                args = json.loads(call.function.arguments)
+
+                if tool_name in ("regs_search_documents", "govinfo_search") and "days" not in args:
+                    args["days"] = days
+
+                yield {
+                    "event": "step",
+                    "data": {
+                        "step_id": step_id,
+                        "status": "running",
+                        "label": get_tool_label(tool_name, args),
+                        "tool_name": tool_name,
+                        "args": args,
+                    }
+                }
+
+                result, preview = await self.tool_executor.execute_tool(tool_name, args)
+                safe_result, _ = self._prepare_tool_output(tool_name, result)
+
+                label_override = None
+                if tool_name == "search_pdf_memory":
+                    label_override = self._format_pdf_search_label(args.get("query", ""), preview)
+
+                yield {
+                    "event": "step",
+                    "data": {
+                        "step_id": step_id,
+                        "status": "done" if "error" not in safe_result else "error",
+                        "result_preview": preview,
+                        "label": label_override,
+                    }
+                }
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": json.dumps(safe_result),
+                })
+
+            response = self.client.chat.completions.create(
+                model=model_to_use,
+                messages=messages,
+                tools=chat_tools if chat_tools else None,
+                tool_choice="auto" if chat_tools else None,
+            )
+
+        final_text = response.choices[0].message.content or ""
+        chunk_size = 50
+        for i in range(0, len(final_text), chunk_size):
+            chunk = final_text[i:i + chunk_size]
+            yield {
+                "event": "assistant_delta",
+                "data": {"delta": chunk}
+            }
+            await asyncio.sleep(0.01)
+
+        sources = self.tool_executor.get_collected_sources()
+
+        yield {
+            "event": "done",
+            "data": {
+                "answer_text": final_text,
+                "sources": [s.model_dump() for s in sources],
+                "response_id": response.id or "",
+                "model": model_to_use,
+            }
+        }
 
     async def chat(
         self,
