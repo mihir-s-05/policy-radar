@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import OpenAI from "openai";
 import { getSettings } from "../config.js";
 import {
     createSession,
@@ -22,43 +21,63 @@ import {
     type SourceItem,
     type SessionInfo,
     type MessageItem,
+    type Step,
 } from "../models/schemas.js";
 import { OpenAIService } from "../services/openaiService.js";
 import { getPdfMemoryStore } from "../services/pdfMemory.js";
 import { WebFetcher } from "../clients/webFetcher.js";
 import { RateLimitError, APIError } from "../clients/base.js";
+import { registerRequest, cancelRequest, unregisterRequest } from "../services/cancellation.js";
 
 const router = new Hono();
 const settings = getSettings();
 
 router.post("/api/session", async (c) => {
-    const sessionId = createSession();
-    return c.json({ session_id: sessionId });
+    try {
+        const sessionId = createSession();
+        console.log(`Created new session: ${sessionId}`);
+        return c.json({ session_id: sessionId });
+    } catch (error) {
+        console.error("Error creating session", error);
+        return c.json({ detail: String(error) }, 500);
+    }
 });
 
 router.get("/api/sessions", async (c) => {
     const limit = parseInt(c.req.query("limit") || "50", 10);
-    const rows = listSessions(limit);
+    if (!Number.isFinite(limit) || limit < 1 || limit > 200) {
+        return c.json({ detail: "limit must be between 1 and 200" }, 400);
+    }
+    try {
+        const rows = listSessions(limit);
 
-    const sessions: SessionInfo[] = rows.map((row) => ({
-        session_id: row.session_id,
-        created_at: row.created_at,
-        last_message: row.last_message,
-        last_message_at: row.last_message_at,
-        title: row.title ? row.title.slice(0, 100) : null,
-    }));
+        const sessions: SessionInfo[] = rows.map((row) => ({
+            session_id: row.session_id,
+            created_at: row.created_at,
+            last_message: row.last_message,
+            last_message_at: row.last_message_at,
+            title: row.title ? row.title.slice(0, 100) : null,
+        }));
 
-    return c.json({ sessions });
+        return c.json({ sessions });
+    } catch (error) {
+        console.error("Error listing sessions", error);
+        return c.json({ detail: String(error) }, 500);
+    }
 });
 
 router.delete("/api/sessions/:sessionId", async (c) => {
     const sessionId = c.req.param("sessionId");
+    const session = getSessionById(sessionId);
+    if (!session) {
+        return c.json({ detail: "Session not found" }, 404);
+    }
 
     try {
         const pdfMemory = getPdfMemoryStore();
         await pdfMemory.deleteSession(sessionId);
     } catch (error) {
-        console.warn(`Failed to delete PDF memory for session ${sessionId}`, error);
+        console.warn(`Failed to clear PDF memory for session ${sessionId}`, error);
     }
 
     const deleted = deleteSession(sessionId);
@@ -70,63 +89,81 @@ router.get("/api/sessions/:sessionId/messages", async (c) => {
 
     const session = getSessionById(sessionId);
     if (!session) {
-        return c.json({ error: "Session not found" }, 404);
+        return c.json({ detail: "Session not found" }, 404);
     }
 
-    const messageRows = getMessages(sessionId);
-    const sourceRows = getSources(sessionId);
+    try {
+        const messageRows = getMessages(sessionId);
+        const sourceRows = getSources(sessionId);
 
-    const sourcesByMessageId = new Map<number, SourceItem[]>();
-    for (const row of sourceRows) {
-        try {
-            const sources = JSON.parse(row.sources_json) as SourceItem[];
-            sourcesByMessageId.set(row.message_id, sources);
-        } catch {
+        const sourcesByMessageId = new Map<number, SourceItem[]>();
+        for (const row of sourceRows) {
+            try {
+                const sources = JSON.parse(row.sources_json) as SourceItem[];
+                sourcesByMessageId.set(row.message_id, sources);
+            } catch {
+            }
         }
+
+        const messages: MessageItem[] = messageRows.map((row) => ({
+            id: row.id,
+            role: row.role as "user" | "assistant",
+            content: row.content,
+            created_at: row.created_at,
+            sources: sourcesByMessageId.get(row.id) || null,
+        }));
+
+        return c.json({ session_id: sessionId, messages });
+    } catch (error) {
+        console.error("Error fetching messages", error);
+        return c.json({ detail: String(error) }, 500);
     }
-
-    const messages: MessageItem[] = messageRows.map((row) => ({
-        id: row.id,
-        role: row.role as "user" | "assistant",
-        content: row.content,
-        created_at: row.created_at,
-        sources: sourcesByMessageId.get(row.id) || null,
-    }));
-
-    return c.json({ session_id: sessionId, messages });
 });
 
 router.patch("/api/sessions/:sessionId/messages/:messageId", async (c) => {
     const sessionId = c.req.param("sessionId");
     const messageId = parseInt(c.req.param("messageId"), 10);
 
+    const session = getSessionById(sessionId);
+    if (!session) {
+        return c.json({ detail: "Session not found" }, 404);
+    }
+
     const body = await c.req.json();
     const parsed = UpdateMessageRequestSchema.safeParse(body);
     if (!parsed.success) {
-        return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
+        return c.json({ detail: "Invalid request", errors: parsed.error.issues }, 400);
     }
 
     const updated = updateMessageContent(sessionId, messageId, parsed.data.content);
+    if (!updated) {
+        return c.json({ detail: "Message not found" }, 404);
+    }
     return c.json({ updated });
 });
 
 router.post("/api/content/fetch", async (c) => {
-    const body = await c.req.json();
-    const parsed = FetchContentRequestSchema.safeParse(body);
-    if (!parsed.success) {
-        return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
+    try {
+        const body = await c.req.json();
+        const parsed = FetchContentRequestSchema.safeParse(body);
+        if (!parsed.success) {
+            return c.json({ detail: "Invalid request", errors: parsed.error.issues }, 400);
+        }
+
+        const { url, max_length, full_text } = parsed.data;
+        const fetcher = new WebFetcher();
+        const result = await fetcher.fetchUrl(url, full_text ? null : max_length);
+
+        return c.json({
+            url: result.url,
+            title: result.title,
+            full_text: result.text,
+            error: result.error,
+        });
+    } catch (error) {
+        console.error("Error fetching content", error);
+        return c.json({ detail: String(error) }, 500);
     }
-
-    const { url, max_length, full_text } = parsed.data;
-    const fetcher = new WebFetcher();
-    const result = await fetcher.fetchUrl(url, full_text ? null : max_length);
-
-    return c.json({
-        url: result.url,
-        title: result.title,
-        full_text: result.text,
-        error: result.error,
-    });
 });
 
 router.get("/api/config", async (c) => {
@@ -165,101 +202,129 @@ router.get("/api/config", async (c) => {
     });
 });
 
-const ensureTrailingSlash = (value: string): string =>
-    value.endsWith("/") ? value : `${value}/`;
-
-const formatValidationError = async (response: Response): Promise<string> => {
-    const body = await response.text();
-    const trimmed = body.trim();
-    const detail = trimmed ? `: ${trimmed.slice(0, 500)}` : "";
-    return `HTTP ${response.status} ${response.statusText}${detail}`;
-};
-
 router.post("/api/validate-model", async (c) => {
     const body = await c.req.json();
     const parsed = ValidateModelRequestSchema.safeParse(body);
     if (!parsed.success) {
-        return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
+        return c.json({ detail: "Invalid request", errors: parsed.error.issues }, 400);
     }
 
     const { provider, model_name, api_key, base_url } = parsed.data;
 
     try {
-        const model = model_name;
-
-        if (provider === "custom") {
-            if (!base_url) {
-                return c.json({ valid: false, message: "Custom provider requires base_url" });
+        if (provider === "openai") {
+            const apiKey = api_key || settings.openaiApiKey;
+            const baseUrl = "https://api.openai.com/v1";
+            if (!apiKey) {
+                return c.json({ valid: false, message: "OpenAI API key missing" });
             }
-            const client = new OpenAI({
-                apiKey: api_key || "not-required",
-                baseURL: base_url,
+
+            const response = await fetch(`${baseUrl}/models`, {
+                headers: { Authorization: `Bearer ${apiKey}` },
             });
 
-            await client.chat.completions.create({
-                model,
-                messages: [{ role: "user", content: "test" }],
-                max_tokens: 1,
-            });
-        } else if (provider === "anthropic") {
+            if (!response.ok) {
+                return c.json({ valid: false, message: `OpenAI API Error: ${response.status}` });
+            }
+
+            const data = await response.json() as { data?: Array<{ id: string }> };
+            const modelIds = (data.data || []).map((m) => m.id);
+
+            if (modelIds.includes(model_name)) {
+                return c.json({ valid: true, message: `Model '${model_name}' found.` });
+            }
+            return c.json({ valid: false, message: `Model '${model_name}' not found in OpenAI list.` });
+        }
+
+        if (provider === "anthropic") {
             const apiKey = api_key || settings.anthropicApiKey;
-            const baseUrl = ensureTrailingSlash(base_url || settings.anthropicBaseUrl);
-            const response = await fetch(new URL("messages", baseUrl), {
-                method: "POST",
+            const baseUrl = "https://api.anthropic.com/v1";
+            if (!apiKey) {
+                return c.json({ valid: false, message: "Anthropic API key missing" });
+            }
+
+            const response = await fetch(`${baseUrl}/models`, {
                 headers: {
-                    "Content-Type": "application/json",
                     "x-api-key": apiKey,
                     "anthropic-version": "2023-06-01",
                 },
-                body: JSON.stringify({
-                    model,
-                    max_tokens: 1,
-                    messages: [{ role: "user", content: "test" }],
-                }),
             });
 
             if (!response.ok) {
-                throw new Error(`Anthropic validation failed (${await formatValidationError(response)})`);
+                return c.json({ valid: false, message: `Anthropic API Error: ${response.status}` });
             }
-        } else if (provider === "gemini") {
-            const apiKey = api_key || settings.googleApiKey;
-            let baseUrl = ensureTrailingSlash(base_url || settings.geminiBaseUrl);
-            baseUrl = baseUrl.replace(/\/openai\/?$/i, "/");
-            const endpoint = new URL(
-                `models/${encodeURIComponent(model)}:generateContent`,
-                baseUrl
-            );
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": apiKey,
-                },
-                body: JSON.stringify({
-                    contents: [{ role: "user", parts: [{ text: "test" }] }],
-                    generationConfig: { maxOutputTokens: 1 },
-                }),
-            });
 
-            if (!response.ok) {
-                throw new Error(`Gemini validation failed (${await formatValidationError(response)})`);
+            const data = await response.json() as { data?: Array<{ id: string }> };
+            const modelIds = (data.data || []).map((m) => m.id);
+
+            if (modelIds.includes(model_name)) {
+                return c.json({ valid: true, message: `Model '${model_name}' found.` });
             }
-        } else {
-            const client = new OpenAI({
-                apiKey: api_key || settings.openaiApiKey,
-            });
-
-            await client.chat.completions.create({
-                model,
-                messages: [{ role: "user", content: "test" }],
-                max_tokens: 1,
-            });
+            return c.json({ valid: false, message: `Model '${model_name}' not found in Anthropic list.` });
         }
 
-        return c.json({ valid: true, message: "Model validated successfully" });
+        if (provider === "gemini") {
+            const apiKey = api_key || settings.googleApiKey;
+            const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+            if (!apiKey) {
+                return c.json({ valid: false, message: "Gemini API key missing" });
+            }
+
+            const fullModelName = model_name.startsWith("models/") ? model_name : `models/${model_name}`;
+            const response = await fetch(`${baseUrl}/models?key=${apiKey}`);
+            if (!response.ok) {
+                return c.json({ valid: false, message: `Gemini API Error: ${response.status}` });
+            }
+
+            const data = await response.json() as { models?: Array<{ name: string }> };
+            const models = data.models || [];
+
+            const found = models.some((m) =>
+                m.name === fullModelName ||
+                m.name === model_name ||
+                m.name.endsWith(`/${model_name}`)
+            );
+
+            if (found) {
+                return c.json({ valid: true, message: `Model '${model_name}' found.` });
+            }
+            return c.json({ valid: false, message: `Model '${model_name}' not found in Gemini list.` });
+        }
+
+        if (provider === "custom") {
+            if (!base_url) {
+                return c.json({ valid: false, message: "Base URL required for custom provider" });
+            }
+
+            const headers: Record<string, string> = {};
+            if (api_key) {
+                headers.Authorization = `Bearer ${api_key}`;
+            }
+
+            const response = await fetch(`${base_url.replace(/\/$/, "")}/models`, {
+                headers,
+            });
+
+            if (!response.ok) {
+                return c.json({ valid: false, message: `Custom endpoint returned ${response.status}` });
+            }
+
+            const data = await response.json() as { data?: Array<{ id?: string }> };
+            if (Array.isArray(data.data)) {
+                const ids = data.data.map((m) => m.id).filter(Boolean) as string[];
+                if (ids.includes(model_name)) {
+                    return c.json({ valid: true, message: `Model '${model_name}' found via compatible list.` });
+                }
+                return c.json({ valid: false, message: `Model '${model_name}' not found in custom list.` });
+            }
+
+            return c.json({ valid: false, message: "Could not parse models list from custom endpoint." });
+        }
+
+        return c.json({ valid: false, message: "Unknown provider" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return c.json({ valid: false, message });
+        return c.json({ valid: false, message: `Connection failed: ${message}` });
     }
 });
 
@@ -267,109 +332,202 @@ router.post("/api/chat", async (c) => {
     const body = await c.req.json();
     const parsed = ChatRequestSchema.safeParse(body);
     if (!parsed.success) {
-        return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
+        return c.json({ detail: "Invalid request", errors: parsed.error.issues }, 400);
     }
 
     const request = parsed.data;
 
     const session = getSessionById(request.session_id);
     if (!session) {
-        return c.json({ error: "Session not found" }, 404);
+        return c.json({ detail: "Session not found" }, 404);
     }
 
-    addMessage(request.session_id, "user", request.message);
-
     try {
-        const openaiService = new OpenAIService();
-        const result = await openaiService.chat({
+        addMessage(request.session_id, "user", request.message);
+
+        let baseUrl: string | null = null;
+        let apiKey = request.api_key || undefined;
+        let modelOverride = request.model || undefined;
+        const provider = request.provider || "openai";
+        let apiMode: "responses" | "chat_completions";
+
+        if (provider === "anthropic") {
+            baseUrl = settings.anthropicBaseUrl;
+            apiKey = apiKey || settings.anthropicApiKey;
+            apiMode = "chat_completions";
+        } else if (provider === "gemini") {
+            baseUrl = settings.geminiBaseUrl;
+            apiKey = apiKey || settings.googleApiKey;
+            apiMode = "chat_completions";
+        } else if (provider === "custom" && request.custom_model) {
+            baseUrl = request.custom_model.base_url;
+            modelOverride = request.custom_model.model_name;
+            if (request.custom_model.api_key) {
+                apiKey = request.custom_model.api_key;
+            }
+            apiMode = "chat_completions";
+        } else {
+            apiKey = apiKey || settings.openaiApiKey;
+            apiMode = (request.api_mode as "responses" | "chat_completions") || settings.defaultApiMode;
+        }
+
+        const openaiService = new OpenAIService({
             sessionId: request.session_id,
-            message: request.message,
-            previousResponseId: session.previous_response_id || undefined,
-            sources: request.sources || undefined,
-            days: request.days,
-            model: request.model || undefined,
-            provider: request.provider || undefined,
-            apiMode: request.api_mode || undefined,
-            customModel: request.custom_model || undefined,
-            apiKey: request.api_key || undefined,
+            baseUrl: baseUrl || undefined,
+            apiKey,
         });
 
-        const messageId = addMessage(request.session_id, "assistant", result.answer_text);
+        let result: {
+            answerText: string;
+            sources: SourceItem[];
+            reasoningSummary: string | null;
+            steps: Step[];
+            responseId: string;
+            modelUsed: string;
+        };
 
+        if (apiMode === "chat_completions") {
+            result = await openaiService.chatCompletions({
+                message: request.message,
+                mode: request.mode || "both",
+                days: request.days,
+                model: modelOverride,
+                sources: request.sources || null,
+            });
+        } else {
+            result = await openaiService.chat({
+                message: request.message,
+                mode: request.mode || "both",
+                days: request.days,
+                model: modelOverride,
+                sources: request.sources || null,
+                previousResponseId: session.previous_response_id || null,
+            });
+        }
+
+        updateSessionResponseId(request.session_id, result.responseId);
+
+        const messageId = addMessage(request.session_id, "assistant", result.answerText);
         if (result.sources.length > 0) {
             saveSources(request.session_id, messageId, JSON.stringify(result.sources));
         }
 
-        if (result.response_id) {
-            updateSessionResponseId(request.session_id, result.response_id);
-        }
-
         return c.json({
-            answer_text: result.answer_text,
+            answer_text: result.answerText,
             sources: result.sources,
+            reasoning_summary: result.reasoningSummary,
             steps: result.steps,
-            model: result.model,
+            model: result.modelUsed,
         });
     } catch (error) {
         if (error instanceof RateLimitError) {
             return c.json(
-                { error: "Rate limit exceeded", retry_after: error.retryAfter },
+                {
+                    detail: {
+                        message: "Rate limit exceeded. Please try again in a moment.",
+                        retry_after: error.retryAfter,
+                    },
+                },
                 429
             );
         }
         if (error instanceof APIError) {
-            const status =
-                error.statusCode === 400 ||
-                error.statusCode === 401 ||
-                error.statusCode === 403 ||
-                error.statusCode === 404 ||
-                error.statusCode === 500 ||
-                error.statusCode === 502 ||
-                error.statusCode === 503
-                    ? error.statusCode
-                    : 500;
-            return c.json({ error: error.message }, status);
+            const status = ([400, 401, 403, 404, 429, 500, 502, 503].includes(error.statusCode)
+                ? error.statusCode
+                : 500) as 400 | 401 | 403 | 404 | 429 | 500 | 502 | 503;
+            return c.json({ detail: error.message }, { status });
+        }
+        if (error instanceof Error && error.name === "ValueError") {
+            return c.json({ detail: error.message }, 400);
         }
         console.error("Chat error:", error);
-        return c.json({ error: String(error) }, 500);
+        return c.json({ detail: String(error) }, 500);
     }
+});
+
+router.post("/api/sessions/:sessionId/cancel", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const cancelled = cancelRequest(sessionId);
+    return c.json({ session_id: sessionId, cancelled });
 });
 
 router.post("/api/chat/stream", async (c) => {
     const body = await c.req.json();
     const parsed = ChatRequestSchema.safeParse(body);
     if (!parsed.success) {
-        return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
+        return c.json({ detail: "Invalid request", errors: parsed.error.issues }, 400);
     }
 
     const request = parsed.data;
 
     const session = getSessionById(request.session_id);
     if (!session) {
-        return c.json({ error: "Session not found" }, 404);
+        return c.json({ detail: "Session not found" }, 404);
     }
 
-    addMessage(request.session_id, "user", request.message);
+    // Register this request for cancellation
+    const abortController = registerRequest(request.session_id);
 
     return streamSSE(c, async (stream) => {
         try {
-            const openaiService = new OpenAIService();
+            addMessage(request.session_id, "user", request.message);
+
+            let baseUrl: string | null = null;
+            let apiKey = request.api_key || undefined;
+            let modelOverride = request.model || undefined;
+            const provider = request.provider || "openai";
+            let apiMode: "responses" | "chat_completions";
+
+            if (provider === "anthropic") {
+                baseUrl = settings.anthropicBaseUrl;
+                apiKey = apiKey || settings.anthropicApiKey;
+                apiMode = "chat_completions";
+            } else if (provider === "gemini") {
+                baseUrl = settings.geminiBaseUrl;
+                apiKey = apiKey || settings.googleApiKey;
+                apiMode = "chat_completions";
+            } else if (provider === "custom" && request.custom_model) {
+                baseUrl = request.custom_model.base_url;
+                modelOverride = request.custom_model.model_name;
+                if (request.custom_model.api_key) {
+                    apiKey = request.custom_model.api_key;
+                }
+                apiMode = "chat_completions";
+            } else {
+                apiKey = apiKey || settings.openaiApiKey;
+                apiMode = (request.api_mode as "responses" | "chat_completions") || settings.defaultApiMode;
+            }
+
+            const openaiService = new OpenAIService({
+                sessionId: request.session_id,
+                baseUrl: baseUrl || undefined,
+                apiKey,
+                signal: abortController.signal,
+            });
+
             let answerText = "";
             let allSources: SourceItem[] = [];
-            let responseId: string | undefined;
+            let responseId: string | null = null;
 
-            for await (const event of openaiService.chatStream({
-                sessionId: request.session_id,
-                message: request.message,
-                previousResponseId: session.previous_response_id || undefined,
-                sources: request.sources || undefined,
-                days: request.days,
-                model: request.model || undefined,
-                provider: request.provider || undefined,
-                apiMode: request.api_mode || undefined,
-                customModel: request.custom_model || undefined,
-                apiKey: request.api_key || undefined,
-            })) {
+            const streamMethod =
+                apiMode === "chat_completions"
+                    ? openaiService.chatCompletionsStream({
+                        message: request.message,
+                        mode: request.mode || "both",
+                        days: request.days,
+                        model: modelOverride,
+                        sources: request.sources || null,
+                    })
+                    : openaiService.chatStream({
+                        message: request.message,
+                        mode: request.mode || "both",
+                        days: request.days,
+                        model: modelOverride,
+                        sources: request.sources || null,
+                        previousResponseId: session.previous_response_id || null,
+                    });
+
+            for await (const event of streamMethod) {
                 await stream.writeSSE({
                     event: event.event,
                     data: JSON.stringify(event.data),
@@ -378,25 +536,68 @@ router.post("/api/chat/stream", async (c) => {
                 if (event.event === "done") {
                     answerText = event.data.answer_text;
                     allSources = event.data.sources;
-                    responseId = event.data.response_id;
+                    responseId = event.data.response_id || null;
                 }
             }
 
+            if (responseId) {
+                updateSessionResponseId(request.session_id, responseId);
+            }
             if (answerText) {
                 const messageId = addMessage(request.session_id, "assistant", answerText);
                 if (allSources.length > 0) {
                     saveSources(request.session_id, messageId, JSON.stringify(allSources));
                 }
-                if (responseId) {
-                    updateSessionResponseId(request.session_id, responseId);
-                }
             }
         } catch (error) {
-            console.error("Stream error:", error);
-            await stream.writeSSE({
-                event: "error",
-                data: JSON.stringify({ error: String(error) }),
-            });
+            if (error instanceof RateLimitError) {
+                await stream.writeSSE({
+                    event: "error",
+                    data: JSON.stringify({
+                        error: "rate_limit",
+                        message: "Rate limit exceeded. Please try again in a moment.",
+                        retry_after: error.retryAfter,
+                    }),
+                });
+            } else if (error instanceof APIError) {
+                await stream.writeSSE({
+                    event: "error",
+                    data: JSON.stringify({
+                        error: "api_error",
+                        message: error.message,
+                        status_code: error.statusCode,
+                    }),
+                });
+            } else if (error instanceof Error && error.name === "ValueError") {
+                await stream.writeSSE({
+                    event: "error",
+                    data: JSON.stringify({
+                        error: "bad_request",
+                        message: error.message,
+                        status_code: 400,
+                    }),
+                });
+            } else if (error instanceof Error && error.name === "AbortError") {
+                // Request was cancelled by user - send a cancelled event
+                await stream.writeSSE({
+                    event: "cancelled",
+                    data: JSON.stringify({
+                        message: "Request cancelled by user",
+                    }),
+                });
+            } else {
+                console.error("Stream error:", error);
+                await stream.writeSSE({
+                    event: "error",
+                    data: JSON.stringify({
+                        error: "internal_error",
+                        message: String(error),
+                    }),
+                });
+            }
+        } finally {
+            // Always unregister the request when done
+            unregisterRequest(request.session_id);
         }
     });
 });
@@ -404,7 +605,6 @@ router.post("/api/chat/stream", async (c) => {
 router.get("/api/health", async (c) => {
     return c.json({
         status: "healthy",
-        timestamp: new Date().toISOString(),
     });
 });
 

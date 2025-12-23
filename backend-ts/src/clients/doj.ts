@@ -32,9 +32,9 @@ export class DOJClient extends BaseAPIClient {
             }
         }
 
-        const components = release.component as unknown[] | undefined;
+        const components = Array.isArray(release.component) ? release.component : undefined;
         let agency: string | null = null;
-        if (Array.isArray(components) && components.length > 0) {
+        if (components && components.length > 0) {
             const first = components[0];
             if (typeof first === "object" && first !== null && "name" in first) {
                 agency = (first as Record<string, unknown>).name as string;

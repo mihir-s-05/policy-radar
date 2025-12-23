@@ -49,6 +49,11 @@ export interface Settings {
     ragChunkOverlap: number;
     ragMaxChunks: number;
     ragTopK: number;
+
+    chromaServerUrl: string;
+    chromaAutoStart: boolean;
+    chromaServerHost: string;
+    chromaServerPort: number;
 }
 
 let cachedSettings: Settings | null = null;
@@ -67,7 +72,7 @@ export function getSettings(): Settings {
         openaiModel: process.env.OPENAI_MODEL || "gpt-5.2",
         embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
         llmProvider: process.env.LLM_PROVIDER || "openai",
-        availableModels: ["gpt-5.2", "gpt-5.1", "gpt-5-mini"],
+        availableModels: ["gpt-5.2", "gpt-5-mini", "gpt-5.1", "o3"],
         defaultApiMode: (process.env.DEFAULT_API_MODE as "responses" | "chat_completions") || "responses",
 
         openaiBaseUrl: "https://api.openai.com/v1",
@@ -76,14 +81,12 @@ export function getSettings(): Settings {
 
         anthropicModels: [
             "claude-opus-4-5-20251101",
-            "claude-haiku-4-5-20251001",
             "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
         ],
         geminiModels: [
-            "gemini-3-pro-preview",
+            "gemini-3-pro",
             "gemini-3-flash-preview",
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
         ],
 
         regulationsBaseUrl: "https://api.regulations.gov/v4",
@@ -114,6 +117,13 @@ export function getSettings(): Settings {
         ragChunkOverlap: parseInt(process.env.RAG_CHUNK_OVERLAP || "200", 10),
         ragMaxChunks: parseInt(process.env.RAG_MAX_CHUNKS || "500", 10),
         ragTopK: parseInt(process.env.RAG_TOP_K || "5", 10),
+
+        chromaServerHost: process.env.CHROMA_SERVER_HOST || "127.0.0.1",
+        chromaServerPort: parseInt(process.env.CHROMA_SERVER_PORT || "8002", 10),
+        chromaServerUrl:
+            process.env.CHROMA_SERVER_URL ||
+            `http://${process.env.CHROMA_SERVER_HOST || "127.0.0.1"}:${parseInt(process.env.CHROMA_SERVER_PORT || "8002", 10)}`,
+        chromaAutoStart: (process.env.CHROMA_AUTO_START || "true").toLowerCase() !== "false",
     };
 
     return cachedSettings;

@@ -18,7 +18,7 @@ import type {
   ValidateModelResponse,
 } from "../types";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8001";
 
 export async function createSession(): Promise<SessionResponse> {
   const response = await fetch(`${API_BASE}/api/session`, {
@@ -39,6 +39,18 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to delete session: ${response.statusText}`);
   }
+}
+
+export async function cancelSession(sessionId: string): Promise<{ cancelled: boolean }> {
+  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/cancel`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to cancel session: ${response.statusText}`);
+  }
+
+  return response.json();
 }
 
 export async function getConfig(): Promise<ConfigResponse> {
@@ -167,7 +179,8 @@ export type SSEEvent =
   | { type: "error"; data: ErrorEvent };
 
 export async function* chatStream(
-  request: ChatRequest
+  request: ChatRequest,
+  signal?: AbortSignal
 ): AsyncGenerator<SSEEvent, void, unknown> {
   const response = await fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
@@ -177,6 +190,7 @@ export async function* chatStream(
     },
     cache: "no-store",
     body: JSON.stringify(request),
+    signal,
   });
 
   if (!response.ok) {

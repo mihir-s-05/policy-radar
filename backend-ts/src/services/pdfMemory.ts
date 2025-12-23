@@ -2,6 +2,7 @@ import { ChromaClient, Collection, IncludeEnum } from "chromadb";
 import OpenAI from "openai";
 import crypto from "crypto";
 import { getSettings } from "../config.js";
+import { ensureChromaServerRunning } from "./chromaServer.js";
 
 let pdfMemoryStore: PdfMemoryStore | null = null;
 
@@ -10,22 +11,53 @@ export class PdfMemoryStore {
     private client: ChromaClient;
     private collection: Collection | null = null;
     private openai: OpenAI;
+    private chromaHealthy = true;
+    private chromaRetryAfter = 0;
+    private chromaFailures = 0;
 
     constructor() {
+        const serverUrl = this.settings.chromaServerUrl;
         this.client = new ChromaClient({
-            path: this.settings.ragPersistDir,
+            path: serverUrl,
         });
         this.openai = new OpenAI({ apiKey: this.settings.openaiApiKey });
+        console.log(`PDF memory store initialized with Chroma at ${serverUrl}`);
     }
 
-    private async getCollection(): Promise<Collection> {
-        if (!this.collection) {
-            this.collection = await this.client.getOrCreateCollection({
-                name: this.settings.ragCollection,
-                metadata: { "hnsw:space": "cosine" },
-            });
+    private markChromaUnavailable(message?: string): void {
+        this.chromaHealthy = false;
+        this.chromaFailures += 1;
+        const backoffMs = Math.min(30000, 1000 * Math.pow(2, this.chromaFailures));
+        this.chromaRetryAfter = Date.now() + backoffMs;
+        if (message) {
+            console.warn(`Chroma unavailable: ${message}`);
         }
-        return this.collection;
+    }
+
+    private async getCollection(): Promise<Collection | null> {
+        const now = Date.now();
+        if (!this.chromaHealthy && now < this.chromaRetryAfter) {
+            return null;
+        }
+
+        try {
+            const ready = await ensureChromaServerRunning();
+            if (!ready) {
+                return null;
+            }
+            if (!this.collection) {
+                this.collection = await this.client.getOrCreateCollection({
+                    name: this.settings.ragCollection,
+                    metadata: { "hnsw:space": "cosine" },
+                });
+            }
+            this.chromaHealthy = true;
+            this.chromaFailures = 0;
+            return this.collection;
+        } catch (error) {
+            this.markChromaUnavailable((error as Error).message);
+            return null;
+        }
     }
 
     private whereAll(filters: Record<string, string | undefined>): Record<string, unknown> {
@@ -45,12 +77,33 @@ export class PdfMemoryStore {
         return text.trim();
     }
 
+    private chooseChunkSize(textLength: number): number {
+        const baseSize = Math.max(200, this.settings.ragChunkSize);
+        if (textLength <= 0) return baseSize;
+
+        const minSize = Math.max(300, Math.floor(baseSize * 0.6));
+        const maxSize = Math.max(minSize + 200, Math.floor(baseSize * 2.5));
+
+        const scale = Math.sqrt(Math.max(textLength, 1) / 60000);
+        let chunkSize = Math.round(baseSize * Math.min(3, Math.max(0.7, scale)));
+
+        chunkSize = Math.max(minSize, Math.min(maxSize, chunkSize));
+        if (textLength < chunkSize * 1.5) {
+            chunkSize = Math.max(minSize, Math.floor(textLength / 2));
+        }
+        if (chunkSize <= 0) {
+            chunkSize = baseSize;
+        }
+        return chunkSize;
+    }
+
     private chunkText(text: string): string[] {
-        const chunkSize = Math.max(200, this.settings.ragChunkSize);
-        const overlap = Math.max(0, Math.min(this.settings.ragChunkOverlap, chunkSize / 2));
         text = this.normalizeText(text);
 
         if (!text) return [];
+
+        const chunkSize = this.chooseChunkSize(text.length);
+        const overlap = Math.max(0, Math.min(this.settings.ragChunkOverlap, Math.floor(chunkSize / 3)));
 
         const chunks: string[] = [];
         let start = 0;
@@ -61,13 +114,6 @@ export class PdfMemoryStore {
 
             if (end === text.length) break;
             start = end - overlap;
-
-            if (this.settings.ragMaxChunks > 0 && chunks.length >= this.settings.ragMaxChunks) {
-                console.warn(
-                    `RAG chunk limit reached (${this.settings.ragMaxChunks}). Remaining text was not indexed.`
-                );
-                break;
-            }
         }
 
         return chunks;
@@ -112,11 +158,15 @@ export class PdfMemoryStore {
         docKey: string,
         text: string,
         metadata?: Record<string, string>
-    ): Promise<void> {
-        if (!sessionId || !docKey || !text) return;
+    ): Promise<{ status: "indexed" | "skipped" | "failed"; error?: string; reason?: string }> {
+        if (!sessionId || !docKey || !text) {
+            return { status: "skipped", reason: "missing_inputs" };
+        }
 
         const chunks = this.chunkText(text);
-        if (!chunks.length) return;
+        if (!chunks.length) {
+            return { status: "skipped", reason: "no_text_chunks" };
+        }
 
         const docHash = crypto.createHash("sha256").update(text).digest("hex");
         const baseMeta: Record<string, string> = {
@@ -127,6 +177,9 @@ export class PdfMemoryStore {
         };
 
         const collection = await this.getCollection();
+        if (!collection) {
+            return { status: "failed", error: "Chroma server unavailable" };
+        }
 
         const existing = await collection.get({
             where: this.whereAll({
@@ -138,7 +191,8 @@ export class PdfMemoryStore {
         });
 
         if (existing.ids?.length) {
-            return;
+            console.log(`PDF already indexed for ${sessionId} (${docKey})`);
+            return { status: "skipped", reason: "already_indexed" };
         }
 
         const embeddings: number[][] = [];
@@ -147,7 +201,9 @@ export class PdfMemoryStore {
         for (let i = 0; i < chunks.length; i += batchSize) {
             const batch = chunks.slice(i, i + batchSize);
             const batchEmbeddings = await this.embedTexts(batch);
-            if (!batchEmbeddings) return;
+            if (!batchEmbeddings) {
+                return { status: "failed", error: "embedding_failed" };
+            }
             embeddings.push(...batchEmbeddings);
         }
 
@@ -171,6 +227,12 @@ export class PdfMemoryStore {
             metadatas,
             embeddings,
         });
+
+        console.log(
+            `Indexed ${chunks.length} PDF chunks for session ${sessionId} (${docKey})`
+        );
+
+        return { status: "indexed" };
     }
 
     async query(
@@ -185,6 +247,9 @@ export class PdfMemoryStore {
         if (!embeddings) return [];
 
         const collection = await this.getCollection();
+        if (!collection) {
+            return [];
+        }
 
         const results = await collection.query({
             queryEmbeddings: embeddings,
@@ -216,10 +281,14 @@ export class PdfMemoryStore {
         if (!sessionId) return;
 
         const collection = await this.getCollection();
+        if (!collection) {
+            return;
+        }
         try {
             await collection.delete({ where: { session_id: sessionId } });
         } catch {
         }
+        console.log(`Cleared PDF memory for session ${sessionId}`);
     }
 }
 

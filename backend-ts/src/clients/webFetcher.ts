@@ -1,7 +1,59 @@
-import { getSettings } from "../config.js";
-import type { SourceItem } from "../models/schemas.js";
-import { htmlToText } from "./govinfo.js";
+﻿import { getSettings } from "../config.js";
 import { extractPdfText } from "./pdfUtils.js";
+
+export function htmlToText(html: string, maxLength: number | null = 15000): string {
+    let text = html;
+    text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
+    text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+    text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, "");
+    text = text.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "");
+    text = text.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "");
+    text = text.replace(/<!--[\s\S]*?-->/g, "");
+
+    text = text.replace(/<\/(p|div|h[1-6]|li|tr|section|article)[^>]*>/gi, "\n");
+    text = text.replace(/<(br|hr)[^>]*\/?>(\s*)/gi, "\n");
+
+    text = text.replace(/<[^>]+>/g, " ");
+
+    const entities: Record<string, string> = {
+        "&nbsp;": " ",
+        "&amp;": "&",
+        "&lt;": "<",
+        "&gt;": ">",
+        "&quot;": "\"",
+        "&#39;": "'",
+        "&apos;": "'",
+        "&mdash;": "--",
+        "&ndash;": "-",
+        "&hellip;": "...",
+        "&copy;": "(c)",
+        "&reg;": "(R)",
+        "&trade;": "(TM)",
+    };
+    for (const [entity, value] of Object.entries(entities)) {
+        text = text.replace(new RegExp(entity, "g"), value);
+    }
+
+    text = text.replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)));
+    text = text.replace(/&#x([0-9a-fA-F]+);/g, (_, num) => String.fromCharCode(parseInt(num, 16)));
+
+    text = text.replace(/[ \t]+/g, " ");
+    text = text.replace(/\n[ \t]+/g, "\n");
+    text = text.replace(/[ \t]+\n/g, "\n");
+    text = text.replace(/\n{3,}/g, "\n\n");
+    text = text.trim();
+
+    if (maxLength !== null && maxLength > 0 && text.length > maxLength) {
+        let truncated = text.slice(0, maxLength);
+        const lastPeriod = truncated.lastIndexOf(".");
+        if (lastPeriod > maxLength * 0.8) {
+            truncated = truncated.slice(0, lastPeriod + 1);
+        }
+        text = truncated + "\n\n[Content truncated due to length...]";
+    }
+
+    return text;
+}
 
 export class WebFetcher {
     private timeout: number;
@@ -12,31 +64,54 @@ export class WebFetcher {
     }
 
     private normalizeUrl(url: string): string {
-        url = (url || "").trim();
-        if (!url) {
+        let normalized = (url || "").trim();
+        if (!normalized) {
             throw new Error("Missing URL");
         }
 
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = `https://${url}`;
+        try {
+            const parsed = new URL(normalized);
+            if (!parsed.protocol) {
+                normalized = `https://${normalized}`;
+            }
+        } catch {
+            normalized = `https://${normalized}`;
         }
 
-        const parsed = new URL(url);
+        const parsed = new URL(normalized);
         if (!["http:", "https:"].includes(parsed.protocol)) {
             throw new Error("Unsupported URL scheme");
         }
 
-        return url;
+        return normalized;
+    }
+
+    private parseRetryAfter(value: string | null): number | null {
+        if (!value) return null;
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) return numeric;
+        const parsed = Date.parse(value);
+        if (Number.isFinite(parsed)) {
+            const now = Date.now();
+            return Math.max(0, (parsed - now) / 1000);
+        }
+        return null;
     }
 
     private isProbablyPdf(contentType: string, url: string, content: Buffer): boolean {
-        if (contentType.includes("application/pdf")) {
-            return true;
-        }
-        if (url.toLowerCase().endsWith(".pdf")) {
-            return true;
-        }
+        if (contentType.includes("application/pdf")) return true;
+        if (url.toLowerCase().endsWith(".pdf")) return true;
         return content.slice(0, 4).toString() === "%PDF";
+    }
+
+    private looksLikeText(content: Buffer): boolean {
+        if (!content.length) return true;
+        const sample = content.slice(0, 1024);
+        if (sample.includes(0)) return false;
+        const printable = [...sample].filter(
+            (b) => (b >= 32 && b <= 126) || [9, 10, 13].includes(b)
+        ).length;
+        return printable / sample.length > 0.85;
     }
 
     private isSupportedContentType(contentType: string, content: Buffer): boolean {
@@ -59,16 +134,6 @@ export class WebFetcher {
         return false;
     }
 
-    private looksLikeText(content: Buffer): boolean {
-        if (!content.length) return true;
-        const sample = content.slice(0, 1024);
-        if (sample.includes(0)) return false;
-        const printable = [...sample].filter(
-            (b) => (b >= 32 && b <= 126) || [9, 10, 13].includes(b)
-        ).length;
-        return printable / sample.length > 0.85;
-    }
-
     private buildHeaders(variant: "bot" | "browser" = "bot"): Record<string, string> {
         if (variant === "browser") {
             return {
@@ -76,6 +141,7 @@ export class WebFetcher {
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate",
             };
         }
 
@@ -83,7 +149,36 @@ export class WebFetcher {
             "User-Agent": "PolicyRadarBot/1.0 (Federal Policy Research Tool)",
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate",
         };
+    }
+
+    private async fetchBestFileFormat(
+        fileFormats: Array<{ format?: string; fileUrl?: string }>,
+        maxLength: number | null
+    ): Promise<Record<string, unknown> | null> {
+        const preferred = ["html", "htm", "txt", "xml", "pdf"];
+        const byFormat: Record<string, string> = {};
+        for (const fmt of fileFormats) {
+            if (fmt.fileUrl) {
+                byFormat[(fmt.format || "").toLowerCase()] = fmt.fileUrl;
+            }
+        }
+
+        for (const fmt of preferred) {
+            const fileUrl = byFormat[fmt];
+            if (!fileUrl) continue;
+            const result = await this.fetchUrl(fileUrl, maxLength);
+            if (result.text) {
+                return result;
+            }
+        }
+
+        return null;
+    }
+
+    private async fetchPdfImagesOnly(_url: string): Promise<{ images: unknown[]; skipped: number }> {
+        return { images: [], skipped: 0 };
     }
 
     async fetchUrl(
@@ -99,6 +194,7 @@ export class WebFetcher {
         pdf_url: string | null;
         images?: unknown[];
         images_skipped?: number;
+        image_count?: number;
     }> {
         const result: {
             url: string;
@@ -110,6 +206,7 @@ export class WebFetcher {
             pdf_url: string | null;
             images?: unknown[];
             images_skipped?: number;
+            image_count?: number;
         } = {
             url,
             title: null,
@@ -124,94 +221,163 @@ export class WebFetcher {
             const normalizedUrl = this.normalizeUrl(url);
             result.url = normalizedUrl;
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-            let response: Response | null = null;
+            let backoff = this.settings.initialBackoff * 1000;
+            const maxAttempts = this.settings.maxRetries + 1;
             let lastError: Error | null = null;
 
-            for (const variant of ["bot", "browser"] as const) {
-                try {
-                    response = await fetch(normalizedUrl, {
-                        headers: this.buildHeaders(variant),
-                        signal: controller.signal,
-                        redirect: "follow",
-                    });
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                let shouldRetry = false;
+                let retryWait: number | null = null;
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+                for (const variant of ["bot", "browser"] as const) {
+                    let response: Response | null = null;
+                    try {
+                        response = await fetch(normalizedUrl, {
+                            headers: this.buildHeaders(variant),
+                            signal: controller.signal,
+                            redirect: "follow",
+                        });
+                    } catch (error) {
+                        lastError = error as Error;
+                        shouldRetry = true;
+                        break;
+                    }
+
+                    if (!response) {
+                        shouldRetry = true;
+                        break;
+                    }
 
                     if (response.status === 403 && variant === "bot") {
                         continue;
                     }
 
+                if (response.status === 429) {
+                    const retryAfter = this.parseRetryAfter(response.headers.get("Retry-After"));
+                    if (attempt < maxAttempts - 1) {
+                        shouldRetry = true;
+                        retryWait = retryAfter !== null ? retryAfter * 1000 : backoff;
+                    } else {
+                        result.error = "Rate limited (429). Please try again later.";
+                        clearTimeout(timeoutId);
+                        return result;
+                    }
                     break;
-                } catch (error) {
-                    lastError = error as Error;
                 }
-            }
 
-            clearTimeout(timeoutId);
+                    if (response.status === 408 || response.status >= 500) {
+                        if (attempt < maxAttempts - 1) {
+                            shouldRetry = true;
+                            retryWait = backoff;
+                        } else {
+                            result.error = `HTTP ${response.status}`;
+                            clearTimeout(timeoutId);
+                            return result;
+                        }
+                        break;
+                    }
 
-            if (!response) {
-                result.error = lastError?.message || "Request failed";
-                return result;
-            }
+                    if (response.status !== 200) {
+                        result.error = `HTTP ${response.status}`;
+                        clearTimeout(timeoutId);
+                        return result;
+                    }
 
-            if (!response.ok) {
-                result.error = `HTTP ${response.status}`;
-                return result;
-            }
+                    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+                    const rawContent = Buffer.from(await response.arrayBuffer());
 
-            const contentType = (response.headers.get("content-type") || "").toLowerCase();
-            const rawContent = Buffer.from(await response.arrayBuffer());
+                    if (this.isProbablyPdf(contentType, normalizedUrl, rawContent)) {
+                        result.content_type = contentType || "application/pdf";
+                        result.content_format = "pdf";
+                        result.pdf_url = normalizedUrl;
 
-            if (this.isProbablyPdf(contentType, normalizedUrl, rawContent)) {
-                result.content_type = contentType || "application/pdf";
-                result.content_format = "pdf";
-                result.pdf_url = normalizedUrl;
+                        const pdfText = await extractPdfText(rawContent, maxLength);
+                        const imageData = await this.fetchPdfImagesOnly(normalizedUrl);
 
-                const pdfText = await extractPdfText(rawContent, maxLength);
-                if (pdfText) {
-                    result.text = pdfText;
+                        if (pdfText) {
+                            result.text = pdfText;
+                        }
+                        if (imageData.images.length) {
+                            result.images = imageData.images;
+                            result.image_count = imageData.images.length;
+                            if (imageData.skipped) {
+                                result.images_skipped = imageData.skipped;
+                            }
+                        }
+
+                        if (result.text || result.images) {
+                            clearTimeout(timeoutId);
+                            return result;
+                        }
+
+                        result.error = "PDF content could not be extracted.";
+                        clearTimeout(timeoutId);
+                        return result;
+                    }
+
+                    if (!this.isSupportedContentType(contentType, rawContent)) {
+                        const label = contentType || "unknown";
+                        result.error = `Unsupported content type: ${label}`;
+                        clearTimeout(timeoutId);
+                        return result;
+                    }
+
+                    result.content_type = contentType;
+                    if (contentType.includes("html") || contentType.includes("xml")) {
+                        result.content_format = "html";
+                    } else if (contentType.startsWith("text/")) {
+                        result.content_format = "text";
+                    } else {
+                        result.content_format = "text";
+                    }
+
+                    const html = rawContent.toString("utf-8");
+
+                    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+                    if (titleMatch) {
+                        result.title = htmlToText(titleMatch[1], 200);
+                    }
+
+                    let mainContent = html;
+                    const mainPatterns = [
+                        /<main[^>]*>([\s\S]*?)<\/main>/i,
+                        /<article[^>]*>([\s\S]*?)<\/article>/i,
+                        /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+                        /<div[^>]*id="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+                    ];
+
+                    for (const pattern of mainPatterns) {
+                        const match = html.match(pattern);
+                        if (match && match[1].length > 500) {
+                            mainContent = match[1];
+                            break;
+                        }
+                    }
+
+                    result.text = htmlToText(mainContent, maxLength);
+                    clearTimeout(timeoutId);
+                    return result;
+                }
+
+                clearTimeout(timeoutId);
+                if (shouldRetry && attempt < maxAttempts - 1) {
+                    const waitTime = retryWait !== null ? retryWait : backoff;
+                    console.warn(`Fetch attempt ${attempt + 1} failed. Retrying in ${waitTime / 1000}s.`);
+                    await new Promise((resolve) => setTimeout(resolve, waitTime));
+                    backoff = Math.min(backoff * 2, 30000);
+                    continue;
+                }
+
+                if (lastError) {
+                    result.error = `Request failed: ${lastError}`;
                 } else {
-                    result.error = "PDF content could not be extracted.";
+                    result.error = "Request failed after retries";
                 }
-
                 return result;
             }
-
-            if (!this.isSupportedContentType(contentType, rawContent)) {
-                result.error = `Unsupported content type: ${contentType || "unknown"}`;
-                return result;
-            }
-
-            result.content_type = contentType;
-            result.content_format = contentType.includes("html") || contentType.includes("xml") ? "html" : "text";
-
-            const html = rawContent.toString("utf-8");
-
-            const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-            if (titleMatch) {
-                result.title = htmlToText(titleMatch[1], 200);
-            }
-
-            let mainContent = html;
-            const mainPatterns = [
-                /<main[^>]*>([\s\S]*?)<\/main>/i,
-                /<article[^>]*>([\s\S]*?)<\/article>/i,
-                /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-                /<div[^>]*id="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-            ];
-
-            for (const pattern of mainPatterns) {
-                const match = html.match(pattern);
-                if (match && match[1].length > 500) {
-                    mainContent = match[1];
-                    break;
-                }
-            }
-
-            result.text = htmlToText(mainContent, maxLength || undefined);
-
-            return result;
         } catch (error) {
             if ((error as Error).name === "AbortError") {
                 result.error = "Request timed out";
@@ -220,6 +386,8 @@ export class WebFetcher {
             }
             return result;
         }
+
+        return result;
     }
 
     async fetchRegulationsDocumentContent(
@@ -236,6 +404,7 @@ export class WebFetcher {
         document_id: string;
         images?: unknown[];
         images_skipped?: number;
+        image_count?: number;
     }> {
         const url = `https://www.regulations.gov/document/${documentId}`;
         const result: {
@@ -249,6 +418,7 @@ export class WebFetcher {
             document_id: string;
             images?: unknown[];
             images_skipped?: number;
+            image_count?: number;
         } = {
             url,
             title: null,
@@ -261,7 +431,7 @@ export class WebFetcher {
         };
 
         let attrs: Record<string, unknown> = {};
-        let fileFormats: { format?: string; fileUrl?: string }[] = [];
+        let fileFormats: Array<{ format?: string; fileUrl?: string }> = [];
         let apiError: string | null = null;
 
         try {
@@ -274,10 +444,10 @@ export class WebFetcher {
             });
 
             if (response.ok) {
-                const data = await response.json() as Record<string, unknown>;
+                const data = (await response.json()) as Record<string, unknown>;
                 const docData = data.data as Record<string, unknown> | undefined;
                 attrs = (docData?.attributes as Record<string, unknown>) || {};
-                fileFormats = (attrs.fileFormats as { format?: string; fileUrl?: string }[]) || [];
+                fileFormats = (attrs.fileFormats as Array<{ format?: string; fileUrl?: string }>) || [];
             } else {
                 apiError = `HTTP ${response.status}`;
             }
@@ -308,38 +478,54 @@ export class WebFetcher {
         }
 
         let bodyText: string | null = null;
+        let images: unknown[] = [];
+        let imagesSkipped: number | null = null;
         let pdfUrl: string | null = null;
 
-        for (const fmt of fileFormats) {
-            if ((fmt.format || "").toLowerCase() === "pdf" && fmt.fileUrl) {
-                pdfUrl = fmt.fileUrl;
-                break;
-            }
-        }
-
-        const preferredFormats = ["html", "htm", "txt", "xml", "pdf"];
-        for (const targetFormat of preferredFormats) {
-            const fmt = fileFormats.find(
-                (f) => (f.format || "").toLowerCase() === targetFormat && f.fileUrl
-            );
-            if (fmt?.fileUrl) {
-                const fetchResult = await this.fetchUrl(fmt.fileUrl, maxLength);
-                if (fetchResult.text) {
-                    bodyText = fetchResult.text;
-                    result.content_format = fetchResult.content_format;
-                    result.content_type = fetchResult.content_type;
-                    if (fetchResult.pdf_url) {
-                        result.pdf_url = fetchResult.pdf_url;
-                    }
+        if (Array.isArray(fileFormats)) {
+            for (const fmt of fileFormats) {
+                if ((fmt.format || "").toLowerCase() === "pdf" && fmt.fileUrl) {
+                    pdfUrl = fmt.fileUrl;
                     break;
                 }
             }
         }
 
-        if (!bodyText) {
+        let fileResult: Record<string, unknown> | null = null;
+        if (Array.isArray(fileFormats) && fileFormats.length) {
+            fileResult = await this.fetchBestFileFormat(fileFormats, maxLength);
+        }
+
+        if (fileResult) {
+            if (fileResult.text) {
+                bodyText = fileResult.text as string;
+            }
+            if (fileResult.title && !result.title) {
+                result.title = fileResult.title as string;
+            }
+            if (fileResult.content_format) {
+                result.content_format = fileResult.content_format as string;
+            }
+            if (fileResult.content_type) {
+                result.content_type = fileResult.content_type as string;
+            }
+            if (fileResult.pdf_url) {
+                result.pdf_url = fileResult.pdf_url as string;
+            }
+            if (Array.isArray(fileResult.images)) {
+                images = fileResult.images;
+                imagesSkipped = (fileResult.images_skipped as number) || imagesSkipped;
+            }
+        }
+
+        if (!bodyText && !images.length) {
             const fallback = await this.fetchUrl(url, maxLength);
             if (fallback.text) {
                 bodyText = fallback.text;
+            }
+            if (fallback.images) {
+                images = fallback.images;
+                imagesSkipped = fallback.images_skipped || imagesSkipped;
             }
             if (fallback.title && !result.title) {
                 result.title = fallback.title;
@@ -350,20 +536,49 @@ export class WebFetcher {
             if (fallback.content_type && !result.content_type) {
                 result.content_type = fallback.content_type;
             }
+            if (fallback.pdf_url && !result.pdf_url) {
+                result.pdf_url = fallback.pdf_url;
+            }
+            if (!result.error && fallback.error) {
+                result.error = fallback.error;
+            }
+        }
+
+        if (!images.length && pdfUrl) {
+            const pdfImages = await this.fetchPdfImagesOnly(pdfUrl);
+            if (pdfImages.images.length) {
+                images = pdfImages.images;
+                imagesSkipped = pdfImages.skipped;
+                result.pdf_url = pdfUrl;
+            }
         }
 
         if (pdfUrl && !result.pdf_url) {
             result.pdf_url = pdfUrl;
         }
 
+        if (images.length) {
+            result.images = images;
+            result.image_count = images.length;
+            if (imagesSkipped) {
+                result.images_skipped = imagesSkipped;
+            }
+        }
+
         if (additionalContent.length > 0) {
             const apiContent = additionalContent.join("\n");
-            result.text = bodyText ? `${apiContent}\n\n---\n\n${bodyText}` : apiContent;
+            if (bodyText) {
+                result.text = `${apiContent}\n\n---\n\n${bodyText}`;
+            } else {
+                result.text = apiContent;
+            }
         } else if (bodyText) {
             result.text = bodyText;
         }
 
-        if (!result.text && !result.error) {
+        if (result.text || result.images) {
+            result.error = null;
+        } else if (!result.error) {
             result.error = apiError || "No content available.";
         }
 

@@ -154,7 +154,7 @@ export class GovInfoClient extends BaseAPIClient {
 
         const { data: summary, source } = await this.getPackageSummary(packageId);
 
-        const pdfUrl = `${this.baseUrl}/packages/${packageId}/pdf?api_key=${this.apiKey}`;
+        const pdfUrl = `${this.baseUrl}/packages/${packageId}/pdf`;
 
         const formats = ["htm", "xml", "txt"];
         let textResult = "";
@@ -162,8 +162,9 @@ export class GovInfoClient extends BaseAPIClient {
 
         for (const fmt of formats) {
             try {
-                const contentUrl = `${this.baseUrl}/packages/${packageId}/${fmt}?api_key=${this.apiKey}`;
-                const response = await fetch(contentUrl, {
+                const contentUrl = new URL(`${this.baseUrl}/packages/${packageId}/${fmt}`);
+                contentUrl.searchParams.set("api_key", this.apiKey);
+                const response = await fetch(contentUrl.toString(), {
                     headers: { Accept: "text/html,application/xml,text/plain" },
                 });
 
@@ -190,7 +191,9 @@ export class GovInfoClient extends BaseAPIClient {
 
         if (!textResult) {
             try {
-                const response = await fetch(pdfUrl);
+                const pdfFetchUrl = new URL(pdfUrl);
+                pdfFetchUrl.searchParams.set("api_key", this.apiKey);
+                const response = await fetch(pdfFetchUrl.toString());
                 if (response.ok) {
                     const pdfBuffer = Buffer.from(await response.arrayBuffer());
                     textResult = await extractPdfText(pdfBuffer, maxLength) || "";

@@ -23,6 +23,7 @@ function App() {
   const {
     messages,
     isLoading,
+    isStreaming,
     error,
     currentSteps,
     currentSources,
@@ -31,11 +32,13 @@ function App() {
     clearMessages,
     loadMessages,
     updateMessageContent,
+    stopGeneration,
   } = useChat({ sessionId });
 
   const [sources, setSources] = useState<SourceSelection>(loadSourcesFromStorage());
   const [days, setDays] = useState(30);
-  const [model, setModel] = useState("gpt-5.2");
+  const [userSettings, setUserSettings] = useState<UserSettings>(() => loadSettings());
+  const [model, setModel] = useState(() => loadSettings().model || "gpt-5.2");
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-5.2", "gpt-5-mini", "gpt-5.1", "o3"]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -43,7 +46,6 @@ function App() {
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const isNewSessionRef = useRef(false);
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
-  const [userSettings, setUserSettings] = useState<UserSettings>(() => loadSettings());
 
   useEffect(() => {
     getConfig()
@@ -279,6 +281,7 @@ function App() {
             isLoading={historyLoading}
             onEditMessage={handleEditMessage}
             isBusy={isChatBusy}
+            onSendMessage={(msg) => handleSendMessage(msg, sources, days, model)}
           />
           {historyError && (
             <div className="mx-4 mb-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -293,6 +296,8 @@ function App() {
           <ChatInput
             onSend={handleSendMessage}
             isLoading={isChatBusy}
+            isStreaming={isStreaming}
+            onStop={stopGeneration}
             sources={sources}
             days={days}
             model={model}

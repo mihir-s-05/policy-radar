@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { User, Feather } from "lucide-react";
@@ -94,19 +94,44 @@ interface MessageListProps {
     dbId: number,
     content: string
   ) => Promise<void> | void;
+  onSendMessage?: (content: string) => void;
 }
+
+const SUGGESTED_INQUIRIES = [
+  "Summarize recent EPA rulemakings on emissions.",
+  "Find Federal Register notices about AI safety from last week.",
+  "What are the latest DHS updates on border security?",
+  "Search for new SEC regulations regarding cryptocurrency.",
+  "What are the recent FDA guidelines on food safety?",
+  "List Department of Energy notices from the past 30 days.",
+  "Show me OSHA updates related to workplace heat safety.",
+  "Find recent FAA rulemakings on commercial drone use.",
+  "What are the latest FTC actions on consumer privacy?",
+  "Summarize recent Department of Education policy changes.",
+  "Find USDA notices about agricultural subsidies this month.",
+  "What are the latest DOI updates on tribal land management?",
+];
+
 
 export function MessageList({
   messages,
   isLoading,
   isBusy,
   onEditMessage,
+  onSendMessage,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  const randomSuggestions = useMemo(() => {
+    return [...SUGGESTED_INQUIRIES]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 3);
+  }, []);
+
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -167,24 +192,24 @@ export function MessageList({
             >
               Suggested Inquiries:
             </p>
-            <ul className="flex flex-col gap-2">
-              {[
-                "Summarize recent EPA rulemakings on emissions.",
-                "Find Federal Register notices about AI safety from last week.",
-                "What are the latest DHS updates on border security?",
-              ].map((suggestion, i) => (
-                <li
+            <div className="flex flex-col gap-2">
+              {randomSuggestions.map((suggestion, i) => (
+                <button
                   key={i}
-                  className="cursor-pointer rounded-md px-3 py-2 text-sm transition-colors hover:bg-parchment-300/50 ink-text"
+                  onClick={() => !isBusy && onSendMessage?.(suggestion)}
+                  disabled={isBusy}
+                  className="w-full text-left cursor-pointer rounded-md px-3 py-2 text-sm transition-colors hover:bg-parchment-300/50 ink-text active:bg-parchment-400/50 disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     fontFamily: "'IM Fell English', serif",
                     borderLeft: "2px solid hsl(30, 40%, 55%)",
+                    background: "none",
                   }}
                 >
                   "{suggestion}"
-                </li>
+                </button>
               ))}
-            </ul>
+            </div>
+
           </div>
 
           <div className="flourish-divider w-full">
@@ -367,8 +392,8 @@ export function MessageList({
                   size="sm"
                   onClick={() => startEditing(message)}
                   disabled={isBusy || isSaving}
-                  className="mt-1 h-6 px-2 text-xs opacity-0 transition-opacity group-hover:opacity-100 hover:bg-transparent hover:underline ink-faded"
-                  style={{ fontFamily: "'IM Fell English SC', serif" }}
+                  className="mt-1 h-6 px-2 text-xs hover:bg-transparent hover:underline"
+                  style={{ fontFamily: "'IM Fell English SC', serif", color: "hsl(25, 40%, 25%)" }}
                 >
                   Edit
                 </Button>
