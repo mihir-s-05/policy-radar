@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, Check, Feather } from "lucide-react";
+import { ChevronDown, Check, Feather, Square } from "lucide-react";
 import type { SourceSelection } from "../types";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
@@ -16,6 +16,8 @@ import { cn } from "../lib/utils";
 interface ChatInputProps {
   onSend: (message: string, sources: SourceSelection, days: number, model: string) => void;
   isLoading: boolean;
+  isStreaming?: boolean;
+  onStop?: () => void;
   sources: SourceSelection;
   days: number;
   model: string;
@@ -99,6 +101,8 @@ function saveSourcesToStorage(sources: SourceSelection): void {
 export function ChatInput({
   onSend,
   isLoading,
+  isStreaming,
+  onStop,
   sources,
   days,
   model,
@@ -162,19 +166,29 @@ export function ChatInput({
             className="min-h-[56px] w-full resize-none border-0 bg-transparent px-3 py-3 text-base shadow-none focus-visible:ring-0 md:text-sm ink-text"
             style={{ fontFamily: "'IM Fell English', serif" }}
           />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!message.trim() || isLoading}
-            className="h-10 w-10 shrink-0 rounded-full btn-wax self-center">
-
-            {isLoading ? (
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            ) : (
-              <Feather className="h-4 w-4" />
-            )}
-            <span className="sr-only">Send message</span>
-          </Button>
+          {isStreaming ? (
+            <Button
+              type="button"
+              size="icon"
+              onClick={onStop}
+              className="h-10 w-10 shrink-0 rounded-full bg-destructive hover:bg-destructive/90 self-center"
+              aria-label="Stop generation">
+              <Square className="h-4 w-4 fill-current" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!message.trim() || isLoading}
+              className="h-10 w-10 shrink-0 rounded-full btn-wax self-center">
+              {isLoading ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                <Feather className="h-4 w-4" />
+              )}
+              <span className="sr-only">Send message</span>
+            </Button>
+          )}
         </form>
 
         <div className="flex items-center gap-4 px-3 pb-2">

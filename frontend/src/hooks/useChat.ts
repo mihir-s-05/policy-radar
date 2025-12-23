@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { chatStream, chat } from "../api/client";
+import { useState, useCallback, useRef } from "react";
+import { chatStream, chat, cancelSession } from "../api/client";
 import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider } from "../types";
 
 interface UseChatOptions {
@@ -9,10 +9,12 @@ interface UseChatOptions {
 export function useChat({ sessionId }: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentSteps, setCurrentSteps] = useState<Step[]>([]);
   const [currentSources, setCurrentSources] = useState<SourceItem[]>([]);
   const [reasoningSummary, setReasoningSummary] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(
     async (
@@ -29,8 +31,15 @@ export function useChat({ sessionId }: UseChatOptions) {
       const effectiveSessionId = overrideSessionId || sessionId;
       if (!effectiveSessionId || !content.trim()) return;
 
+      // Cancel any existing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      abortControllerRef.current = new AbortController();
+
       setError(null);
       setIsLoading(true);
+      setIsStreaming(true);
       setCurrentSteps([]);
       setCurrentSources([]);
       setReasoningSummary(null);
@@ -70,7 +79,7 @@ export function useChat({ sessionId }: UseChatOptions) {
           api_mode: apiMode,
           custom_model: customModel,
           api_key: apiKey,
-        })) {
+        }, abortControllerRef.current.signal)) {
           switch (event.type) {
             case "step": {
               const stepData = event.data;
@@ -151,6 +160,21 @@ export function useChat({ sessionId }: UseChatOptions) {
           )
         );
       } catch (e) {
+        // If the request was aborted, just finalize the message with current content
+        if (e instanceof DOMException && e.name === "AbortError") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                  ...m,
+                  isStreaming: false,
+                }
+                : m
+            )
+          );
+          return;
+        }
+
         console.error("Streaming failed, trying non-streaming:", e);
 
         try {
@@ -194,6 +218,8 @@ export function useChat({ sessionId }: UseChatOptions) {
         }
       } finally {
         setIsLoading(false);
+        setIsStreaming(false);
+        abortControllerRef.current = null;
       }
     },
     [sessionId]
@@ -205,6 +231,10 @@ export function useChat({ sessionId }: UseChatOptions) {
     setCurrentSources([]);
     setReasoningSummary(null);
     setError(null);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
   }, []);
 
   const loadMessages = useCallback((history: Message[], sources?: SourceItem[]) => {
@@ -223,9 +253,23 @@ export function useChat({ sessionId }: UseChatOptions) {
     );
   }, []);
 
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    // Also call the backend to stop server-side processing
+    if (sessionId) {
+      cancelSession(sessionId).catch((err) => {
+        console.warn("Failed to cancel session:", err);
+      });
+    }
+  }, [sessionId]);
+
   return {
     messages,
     isLoading,
+    isStreaming,
     error,
     currentSteps,
     currentSources,
@@ -234,5 +278,6 @@ export function useChat({ sessionId }: UseChatOptions) {
     clearMessages,
     loadMessages,
     updateMessageContent,
+    stopGeneration,
   };
 }

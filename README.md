@@ -13,7 +13,6 @@ A research chatbot for tracking U.S. federal policy activity across multiple off
 
 ## Prerequisites
 
-- Python 3.10+
 - Node.js 18+
 - API keys (see configuration)
 
@@ -30,7 +29,7 @@ A research chatbot for tracking U.S. federal policy activity across multiple off
 | `OPENAI_MODEL` | No | `gpt-5.2` | Default OpenAI model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model for PDF RAG |
 | `DEFAULT_API_MODE` | No | `responses` | OpenAI API mode: `responses` or `chat_completions` |
-| `PORT` | No | `8000` | Backend port |
+| `PORT` | No | `8001` | Backend port |
 | `RAG_PERSIST_DIR` | No | `./chroma` | ChromaDB storage path |
 | `RAG_COLLECTION` | No | `pdf_memory` | ChromaDB collection name |
 | `RAG_CHUNK_SIZE` | No | `1200` | PDF chunk size (chars) |
@@ -39,7 +38,7 @@ A research chatbot for tracking U.S. federal policy activity across multiple off
 | `RAG_TOP_K` | No | `5` | Retrieval count |
 | `SEARCHGOV_AFFILIATE` | No | - | Search.gov affiliate id |
 | `SEARCHGOV_ACCESS_KEY` | No | - | Search.gov access key |
-| `VITE_API_BASE` | No | `http://localhost:8000` | Frontend API base URL |
+| `VITE_API_BASE` | No | `http://localhost:8001` | Frontend API base URL |
 
 \* Required only when using OpenAI as the provider.
 
@@ -56,11 +55,9 @@ The UI settings panel lets you:
 ## Quick Start
 
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+cd backend-ts
+npm install
+npm run dev
 ```
 
 ```bash
@@ -130,16 +127,16 @@ npm run dev
 
 ```
 policy_chatbotv2/
-|-- backend/
-|   |-- app/
-|   |   |-- api/          # FastAPI routes
+|-- backend-ts/
+|   |-- src/
+|   |   |-- api/          # Hono routes
 |   |   |-- clients/      # Government API clients + PDF utilities
-|   |   |-- models/       # Pydantic schemas & database
+|   |   |-- models/       # Zod schemas & SQLite database
 |   |   |-- services/     # LLM service, tool execution, PDF memory
-|   |   |-- config.py     # Settings from env vars
-|   |   |-- main.py       # FastAPI app
-|   |   `-- __init__.py
-|   `-- requirements.txt
+|   |   |-- config.ts     # Settings from env vars
+|   |   `-- index.ts      # Server entrypoint
+|   |-- package.json
+|   `-- tsconfig.json
 |-- frontend/
 |   |-- src/
 |   |   |-- api/          # API client

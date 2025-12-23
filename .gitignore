@@ -20,6 +20,8 @@ ENV/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
@@ -44,6 +46,9 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Local outputs
+tsc_output.txt
 
 # Testing
 .coverage
