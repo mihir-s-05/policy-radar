@@ -36,7 +36,6 @@ export class WebFetcher {
         if (url.toLowerCase().endsWith(".pdf")) {
             return true;
         }
-        // Check PDF magic bytes
         return content.slice(0, 4).toString() === "%PDF";
     }
 
@@ -101,8 +100,6 @@ export class WebFetcher {
         images?: unknown[];
         images_skipped?: number;
     }> {
-        console.log(`Fetching URL content: ${url}`);
-
         const result: {
             url: string;
             title: string | null;
@@ -133,7 +130,6 @@ export class WebFetcher {
             let response: Response | null = null;
             let lastError: Error | null = null;
 
-            // Try bot headers first, then browser headers
             for (const variant of ["bot", "browser"] as const) {
                 try {
                     response = await fetch(normalizedUrl, {
@@ -167,7 +163,6 @@ export class WebFetcher {
             const contentType = (response.headers.get("content-type") || "").toLowerCase();
             const rawContent = Buffer.from(await response.arrayBuffer());
 
-            // Handle PDFs
             if (this.isProbablyPdf(contentType, normalizedUrl, rawContent)) {
                 result.content_type = contentType || "application/pdf";
                 result.content_format = "pdf";
@@ -183,7 +178,6 @@ export class WebFetcher {
                 return result;
             }
 
-            // Handle unsupported content types
             if (!this.isSupportedContentType(contentType, rawContent)) {
                 result.error = `Unsupported content type: ${contentType || "unknown"}`;
                 return result;
@@ -194,13 +188,11 @@ export class WebFetcher {
 
             const html = rawContent.toString("utf-8");
 
-            // Extract title
             const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
             if (titleMatch) {
                 result.title = htmlToText(titleMatch[1], 200);
             }
 
-            // Extract main content
             let mainContent = html;
             const mainPatterns = [
                 /<main[^>]*>([\s\S]*?)<\/main>/i,
@@ -272,7 +264,6 @@ export class WebFetcher {
         let fileFormats: { format?: string; fileUrl?: string }[] = [];
         let apiError: string | null = null;
 
-        // Fetch document metadata from API
         try {
             const apiUrl = `https://api.regulations.gov/v4/documents/${documentId}`;
             const response = await fetch(apiUrl, {
@@ -295,7 +286,6 @@ export class WebFetcher {
             console.warn(`Could not fetch API details for ${documentId}: ${error}`);
         }
 
-        // Build additional content from metadata
         const additionalContent: string[] = [];
         if (attrs.title) {
             additionalContent.push(`Title: ${attrs.title}`);
@@ -320,7 +310,6 @@ export class WebFetcher {
         let bodyText: string | null = null;
         let pdfUrl: string | null = null;
 
-        // Find PDF URL
         for (const fmt of fileFormats) {
             if ((fmt.format || "").toLowerCase() === "pdf" && fmt.fileUrl) {
                 pdfUrl = fmt.fileUrl;
@@ -328,7 +317,6 @@ export class WebFetcher {
             }
         }
 
-        // Try to fetch file content
         const preferredFormats = ["html", "htm", "txt", "xml", "pdf"];
         for (const targetFormat of preferredFormats) {
             const fmt = fileFormats.find(
@@ -348,7 +336,6 @@ export class WebFetcher {
             }
         }
 
-        // Fallback to webpage
         if (!bodyText) {
             const fallback = await this.fetchUrl(url, maxLength);
             if (fallback.text) {
@@ -369,7 +356,6 @@ export class WebFetcher {
             result.pdf_url = pdfUrl;
         }
 
-        // Combine content
         if (additionalContent.length > 0) {
             const apiContent = additionalContent.join("\n");
             result.text = bodyText ? `${apiContent}\n\n---\n\n${bodyText}` : apiContent;

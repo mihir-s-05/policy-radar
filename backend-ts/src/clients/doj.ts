@@ -29,7 +29,6 @@ export class DOJClient extends BaseAPIClient {
                 const timestamp = parseInt(String(release.changed), 10);
                 date = new Date(timestamp * 1000).toISOString().split("T")[0];
             } catch {
-                // ignore
             }
         }
 
@@ -95,7 +94,6 @@ export class DOJClient extends BaseAPIClient {
         }
 
         const url = `${this.baseUrl}/press_releases.json`;
-        console.log(`Searching DOJ press releases: ${query}`);
 
         const data = await this.requestWithRetry<
             Record<string, unknown>[] | { results?: Record<string, unknown>[]; data?: Record<string, unknown>[] }
@@ -112,7 +110,6 @@ export class DOJClient extends BaseAPIClient {
             releases = data.results || data.data || [];
         }
 
-        // Filter by days if specified
         if (days && releases.length > 0) {
             const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
             releases = releases.filter((release) => {

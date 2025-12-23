@@ -98,7 +98,6 @@ export class FiscalDataClient extends BaseAPIClient {
                 );
             }
 
-            // Show additional fields
             const shownFields = new Set([
                 "record_date",
                 "tot_pub_debt_out_amt",
@@ -190,8 +189,6 @@ export class FiscalDataClient extends BaseAPIClient {
         if (fields && fields.length > 0) {
             params.fields = fields.join(",");
         }
-
-        console.log(`Querying Fiscal Data: ${dataset}`);
 
         const data = await this.requestWithRetry<{
             data: Record<string, unknown>[];

@@ -69,7 +69,6 @@ export class FederalRegisterClient extends BaseAPIClient {
         }
 
         const url = `${this.baseUrl}/documents.json`;
-        console.log(`Searching Federal Register: ${query}`);
 
         const data = await this.requestWithRetry<{ results: Record<string, unknown>[] }>({
             url,
@@ -86,7 +85,6 @@ export class FederalRegisterClient extends BaseAPIClient {
         documentNumber: string
     ): Promise<{ document: Record<string, unknown> | null; source: SourceItem | null }> {
         const url = `${this.baseUrl}/documents/${documentNumber}.json`;
-        console.log(`Fetching Federal Register document: ${documentNumber}`);
 
         const data = await this.requestWithRetry<Record<string, unknown>>({
             url,

@@ -1,9 +1,5 @@
 import { z } from "zod";
 
-// ============================================================================
-// Source Types
-// ============================================================================
-
 export const SourceTypeSchema = z.enum([
     "regulations_document",
     "regulations_docket",
@@ -36,10 +32,6 @@ export const SourceItemSchema = z.object({
 
 export type SourceItem = z.infer<typeof SourceItemSchema>;
 
-// ============================================================================
-// Source Selection
-// ============================================================================
-
 export const SourceSelectionSchema = z.object({
     auto: z.boolean().default(true),
     govinfo: z.boolean().default(true),
@@ -55,10 +47,6 @@ export const SourceSelectionSchema = z.object({
 
 export type SourceSelection = z.infer<typeof SourceSelectionSchema>;
 
-// ============================================================================
-// Custom Model Config
-// ============================================================================
-
 export const CustomModelConfigSchema = z.object({
     base_url: z.string(),
     model_name: z.string(),
@@ -66,10 +54,6 @@ export const CustomModelConfigSchema = z.object({
 });
 
 export type CustomModelConfig = z.infer<typeof CustomModelConfigSchema>;
-
-// ============================================================================
-// Step
-// ============================================================================
 
 export const StepStatusSchema = z.enum(["running", "done", "error"]);
 
@@ -83,10 +67,6 @@ export const StepSchema = z.object({
 });
 
 export type Step = z.infer<typeof StepSchema>;
-
-// ============================================================================
-// Chat Request/Response
-// ============================================================================
 
 export const ChatRequestSchema = z.object({
     session_id: z.string(),
@@ -112,10 +92,6 @@ export const ChatResponseSchema = z.object({
 });
 
 export type ChatResponse = z.infer<typeof ChatResponseSchema>;
-
-// ============================================================================
-// Session Types
-// ============================================================================
 
 export const SessionResponseSchema = z.object({
     session_id: z.string(),
@@ -146,10 +122,6 @@ export const DeleteSessionResponseSchema = z.object({
 
 export type DeleteSessionResponse = z.infer<typeof DeleteSessionResponseSchema>;
 
-// ============================================================================
-// Message Types
-// ============================================================================
-
 export const MessageItemSchema = z.object({
     id: z.number(),
     role: z.enum(["user", "assistant"]),
@@ -166,10 +138,6 @@ export const MessagesResponseSchema = z.object({
 });
 
 export type MessagesResponse = z.infer<typeof MessagesResponseSchema>;
-
-// ============================================================================
-// Content Fetch Types
-// ============================================================================
 
 export const FetchContentRequestSchema = z.object({
     url: z.string(),
@@ -188,10 +156,6 @@ export const FetchContentResponseSchema = z.object({
 
 export type FetchContentResponse = z.infer<typeof FetchContentResponseSchema>;
 
-// ============================================================================
-// Update Message Types
-// ============================================================================
-
 export const UpdateMessageRequestSchema = z.object({
     content: z.string(),
 });
@@ -203,10 +167,6 @@ export const UpdateMessageResponseSchema = z.object({
 });
 
 export type UpdateMessageResponse = z.infer<typeof UpdateMessageResponseSchema>;
-
-// ============================================================================
-// Config Types
-// ============================================================================
 
 export const ProviderInfoSchema = z.object({
     name: z.string(),
@@ -228,10 +188,6 @@ export const ConfigResponseSchema = z.object({
 
 export type ConfigResponse = z.infer<typeof ConfigResponseSchema>;
 
-// ============================================================================
-// Validate Model Types
-// ============================================================================
-
 export const ValidateModelRequestSchema = z.object({
     provider: z.enum(["openai", "anthropic", "gemini", "custom"]),
     model_name: z.string(),
@@ -247,10 +203,6 @@ export const ValidateModelResponseSchema = z.object({
 });
 
 export type ValidateModelResponse = z.infer<typeof ValidateModelResponseSchema>;
-
-// ============================================================================
-// Stream Event Types
-// ============================================================================
 
 export const StepEventSchema = z.object({
     step_id: z.string(),

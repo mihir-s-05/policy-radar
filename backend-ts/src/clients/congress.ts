@@ -92,7 +92,6 @@ export class CongressClient extends BaseAPIClient {
         };
 
         const url = `${this.baseUrl}${endpoint}`;
-        console.log(`Fetching Congress bills: ${url}`);
 
         const data = await this.requestWithRetry<{ bills: Record<string, unknown>[] }>({
             url,
@@ -102,7 +101,6 @@ export class CongressClient extends BaseAPIClient {
 
         let bills = data.bills || [];
 
-        // Client-side filter by query
         if (query) {
             const queryLower = query.toLowerCase();
             bills = bills.filter(
@@ -127,8 +125,6 @@ export class CongressClient extends BaseAPIClient {
 
         const url = `${this.baseUrl}/bill/${congress}/${billType.toLowerCase()}/${billNumber}`;
         const params = { format: "json" };
-
-        console.log(`Fetching Congress bill: ${url}`);
 
         const data = await this.requestWithRetry<{ bill: Record<string, unknown> }>({
             url,
@@ -157,8 +153,6 @@ export class CongressClient extends BaseAPIClient {
             format: "json",
             limit: Math.min(limit, 250),
         };
-
-        console.log(`Fetching Congress votes: ${url}`);
 
         const data = await this.requestWithRetry<Record<string, unknown>>({
             url,

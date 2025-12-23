@@ -43,7 +43,6 @@ export class ToolExecutor {
     }
 
     getSources(): SourceItem[] {
-        // Deduplicate by id
         const seen = new Set<string>();
         return this.allSources.filter((s) => {
             if (seen.has(s.id)) return false;
@@ -194,7 +193,6 @@ export class ToolExecutor {
         const documentId = args.document_id as string;
         const content = await this.webFetcher.fetchRegulationsDocumentContent(documentId);
 
-        // Index PDF content for RAG
         if (content.text && content.content_format === "pdf") {
             const pdfMemory = getPdfMemoryStore();
             await pdfMemory.addDocument(this.sessionId, `regs:${documentId}`, content.text, {
@@ -294,7 +292,6 @@ export class ToolExecutor {
             this.allSources.push(source);
         }
 
-        // Index for RAG if PDF
         if (text && contentFormat === "pdf") {
             const pdfMemory = getPdfMemoryStore();
             await pdfMemory.addDocument(this.sessionId, `govinfo:${packageId}`, text, {
@@ -327,7 +324,6 @@ export class ToolExecutor {
         const url = args.url as string;
         const content = await this.webFetcher.fetchUrl(url, 15000);
 
-        // Index for RAG if PDF
         if (content.text && content.content_format === "pdf") {
             const pdfMemory = getPdfMemoryStore();
             await pdfMemory.addDocument(this.sessionId, `url:${url}`, content.text, {

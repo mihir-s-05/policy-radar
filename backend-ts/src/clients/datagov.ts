@@ -89,7 +89,6 @@ export class DataGovClient extends BaseAPIClient {
         }
 
         const url = `${this.baseUrl}/package_search`;
-        console.log(`Searching data.gov: ${query}`);
 
         const data = await this.requestWithRetry<{
             result: { results: Record<string, unknown>[] };

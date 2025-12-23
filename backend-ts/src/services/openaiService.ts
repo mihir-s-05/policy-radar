@@ -9,10 +9,6 @@ import type {
 } from "../models/schemas.js";
 import { ToolExecutor, getToolLabel } from "./toolExecutor.js";
 
-// ============================================================================
-// System Instructions
-// ============================================================================
-
 const SYSTEM_INSTRUCTIONS = `You are Policy Radar, an advanced research assistant specializing in federal policy, legislation, regulations, and government data. You have access to multiple powerful tools that connect to official government APIs and databases.
 
 ## Your Core Capabilities
@@ -58,10 +54,6 @@ Structure responses clearly with:
 - Source citations with links
 - Relevant dates and document numbers
 - Context about the policy landscape when helpful`;
-
-// ============================================================================
-// Tool Definitions
-// ============================================================================
 
 export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     {
@@ -340,10 +332,6 @@ export const TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         },
     },
 ];
-
-// ============================================================================
-// OpenAI Service
-// ============================================================================
 
 export class OpenAIService {
     private settings = getSettings();
@@ -867,7 +855,6 @@ export class OpenAIService {
     > {
         const { client, modelName, message, previousResponseId, filteredTools, toolExecutor } = options;
 
-        // Build input based on previous response
         let input: string | OpenAI.Responses.ResponseInputItem[];
         if (previousResponseId) {
             input = [{ type: "message", role: "user", content: message }];
@@ -875,7 +862,6 @@ export class OpenAIService {
             input = message;
         }
 
-        // Convert tools to response format
         const responseTools = filteredTools.map((t) => ({
             type: "function" as const,
             name: t.function.name,
@@ -943,7 +929,6 @@ export class OpenAIService {
                 }
             }
 
-            // Execute pending tool calls
             if (pendingToolCalls.length > 0) {
                 const toolResults: { call_id: string; output: string }[] = [];
 
@@ -987,7 +972,6 @@ export class OpenAIService {
                     });
                 }
 
-                // Continue with tool results
                 input = toolResults.map((r) => ({
                     type: "function_call_output" as const,
                     call_id: r.call_id,
@@ -1085,7 +1069,6 @@ export class OpenAIService {
                 }
             }
 
-            // Add assistant message to history
             if (assistantContent || pendingToolCalls.size > 0) {
                 const toolCallsArray = Array.from(pendingToolCalls.values()).map((c) => ({
                     id: c.id,
@@ -1100,7 +1083,6 @@ export class OpenAIService {
                 });
             }
 
-            // Execute tool calls
             if (pendingToolCalls.size > 0) {
                 for (const call of pendingToolCalls.values()) {
                     let args: Record<string, unknown> = {};
@@ -1185,7 +1167,6 @@ export class OpenAIService {
 
         for await (const event of this.chatStream(options)) {
             if (event.event === "step") {
-                // Update or add step
                 const existingIndex = steps.findIndex((s) => s.step_id === event.data.step_id);
                 if (existingIndex >= 0) {
                     steps[existingIndex] = event.data;

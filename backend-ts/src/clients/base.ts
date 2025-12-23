@@ -3,7 +3,6 @@ import { getSettings } from "../config.js";
 
 const settings = getSettings();
 
-// Shared cache for GET requests
 const cache = new LRUCache<string, object>({
     max: 1000,
     ttl: settings.cacheTtl * 1000, // Convert to milliseconds
@@ -87,11 +86,9 @@ export class BaseAPIClient {
     protected async requestWithRetry<T = unknown>(options: RequestOptions & { url: string }): Promise<T> {
         const { method = "GET", url, headers, params, json, useCache = true } = options;
 
-        // Build full URL with params
         const finalUrl = params ? this.buildUrl(url, params) : url;
         const cacheKey = this.getCacheKey(method, finalUrl, params as Record<string, unknown>);
 
-        // Check cache for GET requests
         if (useCache && method.toUpperCase() === "GET" && cache.has(cacheKey)) {
             return cache.get(cacheKey) as T;
         }
@@ -120,7 +117,6 @@ export class BaseAPIClient {
 
                 this.parseRateLimitHeaders(response.headers);
 
-                // Handle rate limiting
                 if (response.status === 429) {
                     const retryAfter = response.headers.get("Retry-After");
                     const waitTime = retryAfter ? parseFloat(retryAfter) * 1000 : backoff;
@@ -141,7 +137,6 @@ export class BaseAPIClient {
                     }
                 }
 
-                // Handle other errors
                 if (!response.ok) {
                     const contentType = response.headers.get("content-type") || "";
                     let errorText = "";
@@ -167,7 +162,6 @@ export class BaseAPIClient {
 
                 const data = await response.json() as T;
 
-                // Cache GET responses
                 if (useCache && method.toUpperCase() === "GET") {
                     cache.set(cacheKey, data as object);
                 }

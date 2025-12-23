@@ -4,18 +4,14 @@ import type { SourceItem } from "../models/schemas.js";
 import { extractPdfText } from "./pdfUtils.js";
 
 export function htmlToText(html: string, maxLength: number = 15000): string {
-    // Remove scripts and styles
     let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
     text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
 
-    // Convert block elements to newlines
     text = text.replace(/<\/(p|div|h[1-6]|li|tr|br)[^>]*>/gi, "\n");
     text = text.replace(/<(br|hr)[^>]*\/?>/gi, "\n");
 
-    // Remove remaining tags
     text = text.replace(/<[^>]+>/g, "");
 
-    // Decode HTML entities
     text = text.replace(/&nbsp;/g, " ");
     text = text.replace(/&amp;/g, "&");
     text = text.replace(/&lt;/g, "<");
@@ -23,12 +19,10 @@ export function htmlToText(html: string, maxLength: number = 15000): string {
     text = text.replace(/&quot;/g, '"');
     text = text.replace(/&#39;/g, "'");
 
-    // Clean whitespace
     text = text.replace(/[ \t]+/g, " ");
     text = text.replace(/\n\s*\n/g, "\n\n");
     text = text.trim();
 
-    // Truncate if needed
     if (text.length > maxLength) {
         text = text.slice(0, maxLength) + "\n\n[Content truncated due to length...]";
     }
@@ -112,8 +106,6 @@ export class GovInfoClient extends BaseAPIClient {
         const url = `${this.baseUrl}/search`;
         const params = this.addApiKey();
 
-        console.log(`Searching GovInfo: ${query}`);
-
         const data = await this.requestWithRetry<Record<string, unknown>>({
             method: "POST",
             url,
@@ -136,8 +128,6 @@ export class GovInfoClient extends BaseAPIClient {
     async getPackageSummary(packageId: string): Promise<{ data: Record<string, unknown>; source: SourceItem }> {
         const url = `${this.baseUrl}/packages/${packageId}/summary`;
         const params = this.addApiKey();
-
-        console.log(`Fetching GovInfo package: ${packageId}`);
 
         const data = await this.requestWithRetry<Record<string, unknown>>({
             url,
@@ -166,7 +156,6 @@ export class GovInfoClient extends BaseAPIClient {
 
         const pdfUrl = `${this.baseUrl}/packages/${packageId}/pdf?api_key=${this.apiKey}`;
 
-        // Try to fetch HTML content first
         const formats = ["htm", "xml", "txt"];
         let textResult = "";
         let contentFormat = "unknown";
@@ -199,7 +188,6 @@ export class GovInfoClient extends BaseAPIClient {
             }
         }
 
-        // If no text content, try PDF
         if (!textResult) {
             try {
                 const response = await fetch(pdfUrl);
@@ -213,7 +201,6 @@ export class GovInfoClient extends BaseAPIClient {
             }
         }
 
-        // Fallback to summary
         if (!textResult) {
             textResult = (summary.abstract as string) || (summary.description as string) || "No content available.";
         }
@@ -248,8 +235,6 @@ export class GovInfoClient extends BaseAPIClient {
             pageSize,
             offsetMark,
         });
-
-        console.log(`Fetching GovInfo collection: ${collectionCode}`);
 
         const data = await this.requestWithRetry<Record<string, unknown>>({
             url,

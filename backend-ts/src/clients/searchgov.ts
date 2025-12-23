@@ -52,7 +52,6 @@ export class SearchGovClient extends BaseAPIClient {
         };
 
         const url = `${this.baseUrl}/results/i14y`;
-        console.log(`Searching Search.gov: ${query}`);
 
         const data = await this.requestWithRetry<{
             web?: { results?: Record<string, unknown>[] };

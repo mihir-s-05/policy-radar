@@ -240,7 +240,6 @@ export class USASpendingClient extends BaseAPIClient {
         };
 
         const url = `${this.baseUrl}/search/spending_by_award`;
-        console.log(`Searching USAspending: keywords=${keywords}`);
 
         const data = await this.requestWithRetry<{ results: Record<string, unknown>[] }>({
             method: "POST",

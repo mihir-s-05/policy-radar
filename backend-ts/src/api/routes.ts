@@ -31,17 +31,11 @@ import { RateLimitError, APIError } from "../clients/base.js";
 const router = new Hono();
 const settings = getSettings();
 
-// ============================================================================
-// Session Endpoints
-// ============================================================================
-
-// Create session
 router.post("/api/session", async (c) => {
     const sessionId = createSession();
     return c.json({ session_id: sessionId });
 });
 
-// List sessions
 router.get("/api/sessions", async (c) => {
     const limit = parseInt(c.req.query("limit") || "50", 10);
     const rows = listSessions(limit);
@@ -57,27 +51,23 @@ router.get("/api/sessions", async (c) => {
     return c.json({ sessions });
 });
 
-// Delete session
 router.delete("/api/sessions/:sessionId", async (c) => {
     const sessionId = c.req.param("sessionId");
 
-    // Delete PDF memory for session
     try {
         const pdfMemory = getPdfMemoryStore();
         await pdfMemory.deleteSession(sessionId);
     } catch (error) {
-        console.warn(`Failed to delete PDF memory for session ${sessionId}:`, error);
+        console.warn(`Failed to delete PDF memory for session ${sessionId}`, error);
     }
 
     const deleted = deleteSession(sessionId);
     return c.json({ session_id: sessionId, deleted });
 });
 
-// Get messages for session
 router.get("/api/sessions/:sessionId/messages", async (c) => {
     const sessionId = c.req.param("sessionId");
 
-    // Check session exists
     const session = getSessionById(sessionId);
     if (!session) {
         return c.json({ error: "Session not found" }, 404);
@@ -86,14 +76,12 @@ router.get("/api/sessions/:sessionId/messages", async (c) => {
     const messageRows = getMessages(sessionId);
     const sourceRows = getSources(sessionId);
 
-    // Build map of message_id -> sources
     const sourcesByMessageId = new Map<number, SourceItem[]>();
     for (const row of sourceRows) {
         try {
             const sources = JSON.parse(row.sources_json) as SourceItem[];
             sourcesByMessageId.set(row.message_id, sources);
         } catch {
-            // Ignore parse errors
         }
     }
 
@@ -108,7 +96,6 @@ router.get("/api/sessions/:sessionId/messages", async (c) => {
     return c.json({ session_id: sessionId, messages });
 });
 
-// Update message content
 router.patch("/api/sessions/:sessionId/messages/:messageId", async (c) => {
     const sessionId = c.req.param("sessionId");
     const messageId = parseInt(c.req.param("messageId"), 10);
@@ -122,10 +109,6 @@ router.patch("/api/sessions/:sessionId/messages/:messageId", async (c) => {
     const updated = updateMessageContent(sessionId, messageId, parsed.data.content);
     return c.json({ updated });
 });
-
-// ============================================================================
-// Content Fetch Endpoint
-// ============================================================================
 
 router.post("/api/content/fetch", async (c) => {
     const body = await c.req.json();
@@ -145,10 +128,6 @@ router.post("/api/content/fetch", async (c) => {
         error: result.error,
     });
 });
-
-// ============================================================================
-// Config Endpoint
-// ============================================================================
 
 router.get("/api/config", async (c) => {
     const providers = {
@@ -185,10 +164,6 @@ router.get("/api/config", async (c) => {
         providers,
     });
 });
-
-// ============================================================================
-// Validate Model Endpoint
-// ============================================================================
 
 const ensureTrailingSlash = (value: string): string =>
     value.endsWith("/") ? value : `${value}/`;
@@ -288,10 +263,6 @@ router.post("/api/validate-model", async (c) => {
     }
 });
 
-// ============================================================================
-// Chat Endpoint (Non-streaming)
-// ============================================================================
-
 router.post("/api/chat", async (c) => {
     const body = await c.req.json();
     const parsed = ChatRequestSchema.safeParse(body);
@@ -301,13 +272,11 @@ router.post("/api/chat", async (c) => {
 
     const request = parsed.data;
 
-    // Check session exists
     const session = getSessionById(request.session_id);
     if (!session) {
         return c.json({ error: "Session not found" }, 404);
     }
 
-    // Add user message
     addMessage(request.session_id, "user", request.message);
 
     try {
@@ -325,15 +294,12 @@ router.post("/api/chat", async (c) => {
             apiKey: request.api_key || undefined,
         });
 
-        // Add assistant message
         const messageId = addMessage(request.session_id, "assistant", result.answer_text);
 
-        // Save sources
         if (result.sources.length > 0) {
             saveSources(request.session_id, messageId, JSON.stringify(result.sources));
         }
 
-        // Update response ID
         if (result.response_id) {
             updateSessionResponseId(request.session_id, result.response_id);
         }
@@ -352,16 +318,22 @@ router.post("/api/chat", async (c) => {
             );
         }
         if (error instanceof APIError) {
-            return c.json({ error: error.message }, error.statusCode as 400 | 401 | 403 | 404 | 500 | 502 | 503);
+            const status =
+                error.statusCode === 400 ||
+                error.statusCode === 401 ||
+                error.statusCode === 403 ||
+                error.statusCode === 404 ||
+                error.statusCode === 500 ||
+                error.statusCode === 502 ||
+                error.statusCode === 503
+                    ? error.statusCode
+                    : 500;
+            return c.json({ error: error.message }, status);
         }
         console.error("Chat error:", error);
         return c.json({ error: String(error) }, 500);
     }
 });
-
-// ============================================================================
-// Chat Stream Endpoint (SSE)
-// ============================================================================
 
 router.post("/api/chat/stream", async (c) => {
     const body = await c.req.json();
@@ -372,13 +344,11 @@ router.post("/api/chat/stream", async (c) => {
 
     const request = parsed.data;
 
-    // Check session exists
     const session = getSessionById(request.session_id);
     if (!session) {
         return c.json({ error: "Session not found" }, 404);
     }
 
-    // Add user message
     addMessage(request.session_id, "user", request.message);
 
     return streamSSE(c, async (stream) => {
@@ -412,7 +382,6 @@ router.post("/api/chat/stream", async (c) => {
                 }
             }
 
-            // Save assistant message and sources
             if (answerText) {
                 const messageId = addMessage(request.session_id, "assistant", answerText);
                 if (allSources.length > 0) {
@@ -431,10 +400,6 @@ router.post("/api/chat/stream", async (c) => {
         }
     });
 });
-
-// ============================================================================
-// Health Check
-// ============================================================================
 
 router.get("/api/health", async (c) => {
     return c.json({

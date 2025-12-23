@@ -84,7 +84,6 @@ export class RegulationsClient extends BaseAPIClient {
         }
 
         const url = `${this.baseUrl}/documents`;
-        console.log(`Searching Regulations.gov documents: ${searchTerm}`);
 
         const data = await this.requestWithRetry<{ data: Record<string, unknown>[] }>({
             url,
@@ -110,7 +109,6 @@ export class RegulationsClient extends BaseAPIClient {
         }
 
         const url = `${this.baseUrl}/documents/${documentId}`;
-        console.log(`Fetching Regulations.gov document: ${documentId}`);
 
         const data = await this.requestWithRetry<{ data: Record<string, unknown> }>({
             url,
@@ -145,7 +143,6 @@ export class RegulationsClient extends BaseAPIClient {
         };
 
         const url = `${this.baseUrl}/dockets`;
-        console.log(`Searching Regulations.gov dockets: ${searchTerm}`);
 
         const data = await this.requestWithRetry<{ data: Record<string, unknown>[] }>({
             url,
@@ -161,7 +158,6 @@ export class RegulationsClient extends BaseAPIClient {
 
     async getDocket(docketId: string): Promise<{ docket: Record<string, unknown>; source: SourceItem }> {
         const url = `${this.baseUrl}/dockets/${docketId}`;
-        console.log(`Fetching Regulations.gov docket: ${docketId}`);
 
         const data = await this.requestWithRetry<{ data: Record<string, unknown> }>({
             url,

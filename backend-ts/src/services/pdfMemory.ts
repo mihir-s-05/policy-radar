@@ -16,7 +16,6 @@ export class PdfMemoryStore {
             path: this.settings.ragPersistDir,
         });
         this.openai = new OpenAI({ apiKey: this.settings.openaiApiKey });
-        console.log(`PDF memory store initialized at ${this.settings.ragPersistDir}`);
     }
 
     private async getCollection(): Promise<Collection> {
@@ -129,7 +128,6 @@ export class PdfMemoryStore {
 
         const collection = await this.getCollection();
 
-        // Check if already indexed
         const existing = await collection.get({
             where: this.whereAll({
                 session_id: sessionId,
@@ -140,11 +138,9 @@ export class PdfMemoryStore {
         });
 
         if (existing.ids?.length) {
-            console.log(`PDF already indexed for ${sessionId} (${docKey})`);
             return;
         }
 
-        // Embed in batches
         const embeddings: number[][] = [];
         const batchSize = 32;
 
@@ -162,13 +158,11 @@ export class PdfMemoryStore {
             total_chunks: String(chunks.length),
         }));
 
-        // Delete old versions first
         try {
             await collection.delete({
                 where: this.whereAll({ session_id: sessionId, doc_key: docKey }),
             });
         } catch {
-            // Ignore errors
         }
 
         await collection.upsert({
@@ -177,8 +171,6 @@ export class PdfMemoryStore {
             metadatas,
             embeddings,
         });
-
-        console.log(`Indexed ${chunks.length} PDF chunks for session ${sessionId} (${docKey})`);
     }
 
     async query(
@@ -227,9 +219,7 @@ export class PdfMemoryStore {
         try {
             await collection.delete({ where: { session_id: sessionId } });
         } catch {
-            // Ignore errors
         }
-        console.log(`Cleared PDF memory for session ${sessionId}`);
     }
 }
 
