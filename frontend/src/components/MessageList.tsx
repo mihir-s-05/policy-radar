@@ -89,6 +89,7 @@ interface MessageListProps {
   messages: Message[];
   isLoading?: boolean;
   isBusy?: boolean;
+  onSuggestedInquiry?: (suggestion: string) => void;
   onEditMessage?: (
     messageId: string,
     dbId: number,
@@ -100,6 +101,7 @@ export function MessageList({
   messages,
   isLoading,
   isBusy,
+  onSuggestedInquiry,
   onEditMessage,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -175,13 +177,20 @@ export function MessageList({
               ].map((suggestion, i) => (
                 <li
                   key={i}
-                  className="cursor-pointer rounded-md px-3 py-2 text-sm transition-colors hover:bg-parchment-300/50 ink-text"
-                  style={{
-                    fontFamily: "'IM Fell English', serif",
-                    borderLeft: "2px solid hsl(30, 40%, 55%)",
-                  }}
+                  className="rounded-md"
                 >
-                  "{suggestion}"
+                  <button
+                    type="button"
+                    onClick={() => onSuggestedInquiry?.(suggestion)}
+                    disabled={!onSuggestedInquiry || !!isBusy}
+                    className="w-full rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-parchment-300/50 disabled:cursor-not-allowed disabled:opacity-60 ink-text"
+                    style={{
+                      fontFamily: "'IM Fell English', serif",
+                      borderLeft: "2px solid hsl(30, 40%, 55%)",
+                    }}
+                  >
+                    "{suggestion}"
+                  </button>
                 </li>
               ))}
             </ul>

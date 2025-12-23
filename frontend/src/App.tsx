@@ -279,6 +279,9 @@ function App() {
             isLoading={historyLoading}
             onEditMessage={handleEditMessage}
             isBusy={isChatBusy}
+            onSuggestedInquiry={(suggestion) =>
+              handleSendMessage(suggestion, sources, days, model)
+            }
           />
           {historyError && (
             <div className="mx-4 mb-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
