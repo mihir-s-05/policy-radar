@@ -89,6 +89,7 @@ interface MessageListProps {
   messages: Message[];
   isLoading?: boolean;
   isBusy?: boolean;
+  onSuggestedInquiry?: (suggestion: string) => void;
   onEditMessage?: (
     messageId: string,
     dbId: number,
@@ -117,6 +118,7 @@ export function MessageList({
   messages,
   isLoading,
   isBusy,
+  onSuggestedInquiry,
   onEditMessage,
   onSendMessage,
 }: MessageListProps) {
