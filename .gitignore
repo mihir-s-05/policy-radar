@@ -41,6 +41,10 @@ build/
 
 # OS
 .DS_Store
+
+# Windows-reserved filename artifacts in this repo
+nul
+backend-ts/nul
 Thumbs.db
 
 # Logs

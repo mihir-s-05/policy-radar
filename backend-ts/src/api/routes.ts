@@ -194,11 +194,73 @@ router.get("/api/config", async (c) => {
         },
     };
 
+    const embeddingProviders = {
+        local: {
+            name: "local",
+            display_name: "Local (Transformers.js)",
+            base_url: null,
+            models: [
+                "Xenova/all-MiniLM-L6-v2",
+                "Xenova/all-mpnet-base-v2",
+            ],
+            api_key_detected: true,
+            supported: true,
+        },
+        openai: {
+            name: "openai",
+            display_name: "OpenAI",
+            base_url: settings.openaiBaseUrl,
+            models: [
+                "text-embedding-3-small",
+                "text-embedding-3-large",
+            ],
+            api_key_detected: Boolean(settings.openaiApiKey),
+            supported: true,
+        },
+        gemini: {
+            name: "gemini",
+            display_name: "Google Gemini (OpenAI-compatible)",
+            base_url: settings.geminiBaseUrl,
+            models: [
+                "text-embedding-004",
+            ],
+            api_key_detected: Boolean(settings.googleApiKey),
+            supported: true,
+        },
+        huggingface: {
+            name: "huggingface",
+            display_name: "Hugging Face",
+            base_url: settings.huggingfaceEndpointUrl || "https://api-inference.huggingface.co",
+            models: [
+                "sentence-transformers/all-MiniLM-L6-v2",
+                "sentence-transformers/all-mpnet-base-v2",
+                "intfloat/e5-small-v2",
+                "intfloat/e5-base-v2",
+                "BAAI/bge-small-en-v1.5",
+                "BAAI/bge-base-en-v1.5",
+            ],
+            api_key_detected: Boolean(settings.huggingfaceApiKey),
+            supported: true,
+            notes: "Uses Hugging Face Inference API feature extraction. Some models return token embeddings; the backend mean-pools and normalizes.",
+        },
+        custom: {
+            name: "custom",
+            display_name: "Custom (OpenAI-compatible)",
+            base_url: null,
+            models: [],
+            api_key_detected: false,
+            supported: true,
+        },
+    };
+
     return c.json({
         model: settings.openaiModel,
         available_models: settings.availableModels,
         default_api_mode: settings.defaultApiMode,
+        embedding_provider: settings.embeddingProvider,
+        embedding_model: settings.embeddingModel,
         providers,
+        embedding_providers: embeddingProviders,
     });
 });
 
@@ -371,10 +433,31 @@ router.post("/api/chat", async (c) => {
             apiMode = (request.api_mode as "responses" | "chat_completions") || settings.defaultApiMode;
         }
 
+        const embeddingProvider = (request.embedding_provider as "local" | "openai" | "gemini" | "huggingface" | "custom" | null) || settings.embeddingProvider as any || "local";
+        const embeddingModel = request.embedding_model || settings.embeddingModel;
+        const embeddingApiKey = request.embedding_api_key || undefined;
+        const embeddingCustom = request.embedding_custom_model || null;
+
+        const embeddingConfig =
+            embeddingProvider === "custom" && embeddingCustom
+                ? {
+                    provider: "custom" as const,
+                    model: embeddingCustom.model_name,
+                    apiKey: embeddingCustom.api_key || null,
+                    baseUrl: embeddingCustom.base_url,
+                }
+                : {
+                    provider: embeddingProvider,
+                    model: embeddingModel,
+                    apiKey: embeddingApiKey || null,
+                    baseUrl: null,
+                };
+
         const openaiService = new OpenAIService({
             sessionId: request.session_id,
             baseUrl: baseUrl || undefined,
             apiKey,
+            embedding: embeddingConfig,
         });
 
         let result: {
@@ -498,11 +581,32 @@ router.post("/api/chat/stream", async (c) => {
                 apiMode = (request.api_mode as "responses" | "chat_completions") || settings.defaultApiMode;
             }
 
+            const embeddingProvider = (request.embedding_provider as "local" | "openai" | "gemini" | "huggingface" | "custom" | null) || settings.embeddingProvider as any || "local";
+            const embeddingModel = request.embedding_model || settings.embeddingModel;
+            const embeddingApiKey = request.embedding_api_key || undefined;
+            const embeddingCustom = request.embedding_custom_model || null;
+
+            const embeddingConfig =
+                embeddingProvider === "custom" && embeddingCustom
+                    ? {
+                        provider: "custom" as const,
+                        model: embeddingCustom.model_name,
+                        apiKey: embeddingCustom.api_key || null,
+                        baseUrl: embeddingCustom.base_url,
+                    }
+                    : {
+                        provider: embeddingProvider,
+                        model: embeddingModel,
+                        apiKey: embeddingApiKey || null,
+                        baseUrl: null,
+                    };
+
             const openaiService = new OpenAIService({
                 sessionId: request.session_id,
                 baseUrl: baseUrl || undefined,
                 apiKey,
                 signal: abortController.signal,
+                embedding: embeddingConfig,
             });
 
             let answerText = "";

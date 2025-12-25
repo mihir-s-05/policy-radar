@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { chatStream, chat, cancelSession } from "../api/client";
-import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider } from "../types";
+import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider, EmbeddingProvider } from "../types";
 
 interface UseChatOptions {
   sessionId: string | null;
@@ -26,12 +26,17 @@ export function useChat({ sessionId }: UseChatOptions) {
       apiMode?: ApiMode,
       customModel?: CustomModelConfig,
       apiKey?: string,
-      provider?: ModelProvider
+      provider?: ModelProvider,
+      embedding?: {
+        provider?: EmbeddingProvider;
+        model?: string;
+        custom_model?: CustomModelConfig;
+        api_key?: string;
+      }
     ) => {
       const effectiveSessionId = overrideSessionId || sessionId;
       if (!effectiveSessionId || !content.trim()) return;
 
-      // Cancel any existing request
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -79,6 +84,10 @@ export function useChat({ sessionId }: UseChatOptions) {
           api_mode: apiMode,
           custom_model: customModel,
           api_key: apiKey,
+          embedding_provider: embedding?.provider,
+          embedding_model: embedding?.custom_model?.model_name || embedding?.model,
+          embedding_custom_model: embedding?.custom_model,
+          embedding_api_key: embedding?.api_key,
         }, abortControllerRef.current.signal)) {
           switch (event.type) {
             case "step": {
@@ -188,6 +197,10 @@ export function useChat({ sessionId }: UseChatOptions) {
             api_mode: apiMode,
             custom_model: customModel,
             api_key: apiKey,
+            embedding_provider: embedding?.provider,
+            embedding_model: embedding?.custom_model?.model_name || embedding?.model,
+            embedding_custom_model: embedding?.custom_model,
+            embedding_api_key: embedding?.api_key,
           });
 
           setMessages((prev) =>

@@ -36,9 +36,15 @@ READING FULL DOCUMENT CONTENT:
 - Read the full content when the user asks for details, summaries, or analysis of specific documents
 - Use fetch_url_content as a fallback for any government URL
 - Some tools may include extracted PDF images as separate inputs. Use them when relevant.
+
+USING PDF MEMORY (RAG):
 - Use search_pdf_memory to retrieve previously indexed PDF content for this session when needed.
 - If a PDF was read or indexed in this session and the user asks about its contents, call search_pdf_memory with the user's query before answering.
+- When search_pdf_memory returns results, you MUST use the actual text content from the "matches" array in your response.
+- The "matches" array contains relevant text chunks from the indexed PDFs - quote and cite these chunks directly in your answer.
+- Include citations to the PDF URLs from the matches metadata when referencing the content.
 - When the user requests quotes from PDFs, prioritize sources that provide PDF content and read those PDFs; then search the indexed PDF memory before responding.
+- IMPORTANT: If search_pdf_memory returns matches, base your answer on those matches rather than just listing PDFs to download.
 
 Format your response clearly with:
 - A summary of what you found
@@ -265,7 +271,7 @@ export const TOOLS: ToolSpec[] = [
     {
         type: "function",
         name: "search_pdf_memory",
-        description: "Search indexed PDF content stored in memory for this session. Use this to recall details from PDFs already processed.",
+        description: "Search indexed PDF content stored in memory for this session. Returns relevant text chunks from previously indexed PDFs. You MUST use the text content from the 'matches' array in your response when this tool returns results. The matches contain the actual PDF text that answers the user's query.",
         parameters: {
             type: "object",
             properties: {
@@ -506,7 +512,13 @@ export class OpenAIService {
     private toolExecutor: ToolExecutor;
     private signal?: AbortSignal;
 
-    constructor(options?: { sessionId?: string; baseUrl?: string; apiKey?: string; signal?: AbortSignal }) {
+    constructor(options?: {
+        sessionId?: string;
+        baseUrl?: string;
+        apiKey?: string;
+        signal?: AbortSignal;
+        embedding?: { provider?: "local" | "openai" | "gemini" | "huggingface" | "custom" | null; model?: string | null; apiKey?: string | null; baseUrl?: string | null } | null;
+    }) {
         const settings = getSettings();
         const effectiveApiKey = options?.apiKey || settings.openaiApiKey;
 
@@ -522,6 +534,7 @@ export class OpenAIService {
             ? new OpenAI({ apiKey: settings.openaiApiKey, baseURL: settings.openaiBaseUrl })
             : null;
         this.toolExecutor = new ToolExecutor(options?.sessionId || null);
+        this.toolExecutor.setEmbeddingConfig(options?.embedding || null);
         this.signal = options?.signal;
     }
 
@@ -779,7 +792,7 @@ export class OpenAIService {
         }
         const rationaleLine = autoRationale ? `\n- Auto selection: ${autoRationale}` : "";
 
-        return `User query: ${message}\n\nSearch context:\n- Time window: Last ${days} days\n- Sources: ${sourcesLine}${rationaleLine}\n\nIf a PDF was indexed for this session, use search_pdf_memory with the user query before answering.\n\nPlease search for relevant information and provide a comprehensive answer with citations.`;
+        return `User query: ${message}\n\nSearch context:\n- Time window: Last ${days} days\n- Sources: ${sourcesLine}${rationaleLine}\n\nIf a PDF was indexed for this session, use search_pdf_memory with the user query before answering. When search_pdf_memory returns matches, USE the text content from those matches in your response - quote and cite the actual PDF content, don't just list PDFs to download.\n\nPlease search for relevant information and provide a comprehensive answer with citations.`;
     }
 
     private getConfiguredSources(): Set<string> {
@@ -962,7 +975,7 @@ export class OpenAIService {
                 model: routingModel,
                 messages: selectorMessages,
                 temperature: 0,
-                max_tokens: 200,
+                max_completion_tokens: 200,
                 ...(useResponseFormat ? { response_format: { type: "json_object" } } : {}),
             });
 

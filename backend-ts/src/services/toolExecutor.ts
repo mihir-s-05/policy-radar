@@ -28,6 +28,7 @@ export class ToolExecutor {
     private dojClient: DOJClient;
     private searchGovClient: SearchGovClient;
     private sessionId: string | null;
+    private embeddingConfig: { provider?: "local" | "openai" | "gemini" | "huggingface" | "custom" | null; model?: string | null; apiKey?: string | null; baseUrl?: string | null } | null = null;
     private allSources: SourceItem[] = [];
     private maxToolTextLength = 20000;
 
@@ -47,6 +48,10 @@ export class ToolExecutor {
 
     setSession(sessionId?: string | null): void {
         this.sessionId = sessionId || null;
+    }
+
+    setEmbeddingConfig(config?: { provider?: "local" | "openai" | "gemini" | "huggingface" | "custom" | null; model?: string | null; apiKey?: string | null; baseUrl?: string | null } | null): void {
+        this.embeddingConfig = config || null;
     }
 
     getCollectedSources(): SourceItem[] {
@@ -119,15 +124,28 @@ export class ToolExecutor {
         }
 
         try {
+            console.log(`[PDF Index] Starting PDF indexing for docKey: ${options.docKey}, sourceType: ${options.sourceType}, textLength: ${textToIndex.length}`);
             const pdfMemory = getPdfMemoryStore();
-            const result = await pdfMemory.addDocument(this.sessionId, options.docKey, textToIndex, metadata);
+            const result = await pdfMemory.addDocument(
+                this.sessionId,
+                options.docKey,
+                textToIndex,
+                metadata,
+                this.embeddingConfig
+            );
+            
+            console.log(`[PDF Index] Indexing result for ${options.docKey}: status=${result.status}, error=${result.error || 'none'}, reason=${result.reason || 'none'}`);
+            
             if (result.status !== "indexed") {
                 if (result.error) {
-                    console.warn(
-                        `Failed to index PDF text for ${options.docKey} (${options.sourceType}): ${result.error}`
+                    console.error(
+                        `[PDF Index] Failed to index PDF text for ${options.docKey} (${options.sourceType}): ${result.error}`
                     );
                 }
+            } else {
+                console.log(`[PDF Index] Successfully indexed PDF text for ${options.docKey}`);
             }
+            
             return {
                 status: result.status,
                 doc_key: options.docKey,
@@ -138,9 +156,17 @@ export class ToolExecutor {
                 reason: result.reason,
             };
         } catch (error) {
-            const message = String(error);
-            console.warn(
-                `Failed to index PDF text for ${options.docKey} (${options.sourceType}): ${message}`
+            const errorDetails = {
+                message: String(error),
+                errorType: error instanceof Error ? error.constructor.name : typeof error,
+                stack: error instanceof Error ? error.stack : undefined,
+                docKey: options.docKey,
+                sourceType: options.sourceType,
+                textLength: textToIndex.length,
+            };
+            console.error(
+                `[PDF Index] Exception while indexing PDF text for ${options.docKey} (${options.sourceType}):`,
+                JSON.stringify(errorDetails, null, 2)
             );
             return {
                 status: "failed",
@@ -148,7 +174,7 @@ export class ToolExecutor {
                 source_type: options.sourceType,
                 pdf_url: options.pdfUrl || null,
                 source_url: options.sourceUrl || null,
-                error: message,
+                error: String(error),
             };
         }
     }
@@ -664,7 +690,7 @@ export class ToolExecutor {
         }
 
         const pdfMemory = getPdfMemoryStore();
-        const matches = await pdfMemory.query(this.sessionId, query, topK);
+        const matches = await pdfMemory.query(this.sessionId, query, topK, this.embeddingConfig);
         console.log(
             `PDF memory search for session ${this.sessionId}: '${query.slice(0, 80)}' (${matches.length} matches)`
         );

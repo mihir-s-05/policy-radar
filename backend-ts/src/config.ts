@@ -7,9 +7,11 @@ export interface Settings {
     openaiApiKey: string;
     anthropicApiKey: string;
     googleApiKey: string;
+    huggingfaceApiKey: string;
 
     openaiModel: string;
     embeddingModel: string;
+    embeddingProvider: string;
     llmProvider: string;
     availableModels: string[];
     defaultApiMode: "responses" | "chat_completions";
@@ -17,6 +19,9 @@ export interface Settings {
     openaiBaseUrl: string;
     anthropicBaseUrl: string;
     geminiBaseUrl: string;
+
+    embeddingBaseUrl: string;
+    huggingfaceEndpointUrl: string;
 
     anthropicModels: string[];
     geminiModels: string[];
@@ -43,17 +48,10 @@ export interface Settings {
     maxRetries: number;
     initialBackoff: number;
 
-    ragCollection: string;
-    ragPersistDir: string;
     ragChunkSize: number;
     ragChunkOverlap: number;
     ragMaxChunks: number;
     ragTopK: number;
-
-    chromaServerUrl: string;
-    chromaAutoStart: boolean;
-    chromaServerHost: string;
-    chromaServerPort: number;
 }
 
 let cachedSettings: Settings | null = null;
@@ -68,9 +66,12 @@ export function getSettings(): Settings {
         openaiApiKey: process.env.OPENAI_API_KEY || "",
         anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
         googleApiKey: process.env.GOOGLE_API_KEY || "",
+        huggingfaceApiKey: process.env.HUGGINGFACE_API_KEY || "",
 
         openaiModel: process.env.OPENAI_MODEL || "gpt-5.2",
-        embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
+        // Used by the local PDF RAG embedding pipeline (Transformers.js).
+        embeddingModel: process.env.EMBEDDING_MODEL || "Xenova/all-MiniLM-L6-v2",
+        embeddingProvider: process.env.EMBEDDING_PROVIDER || "local",
         llmProvider: process.env.LLM_PROVIDER || "openai",
         availableModels: ["gpt-5.2", "gpt-5-mini", "gpt-5.1", "o3"],
         defaultApiMode: (process.env.DEFAULT_API_MODE as "responses" | "chat_completions") || "responses",
@@ -78,6 +79,11 @@ export function getSettings(): Settings {
         openaiBaseUrl: "https://api.openai.com/v1",
         anthropicBaseUrl: "https://api.anthropic.com/v1",
         geminiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+
+        // Optional: override for OpenAI-compatible embedding endpoints when EMBEDDING_PROVIDER != local.
+        embeddingBaseUrl: process.env.EMBEDDING_BASE_URL || "",
+        // Optional: override Hugging Face inference endpoint URL (e.g. a dedicated Inference Endpoint).
+        huggingfaceEndpointUrl: process.env.HUGGINGFACE_ENDPOINT_URL || "",
 
         anthropicModels: [
             "claude-opus-4-5-20251101",
@@ -111,19 +117,10 @@ export function getSettings(): Settings {
         maxRetries: 3,
         initialBackoff: 1.0,
 
-        ragCollection: process.env.RAG_COLLECTION || "pdf_memory",
-        ragPersistDir: process.env.RAG_PERSIST_DIR || "./chroma",
         ragChunkSize: parseInt(process.env.RAG_CHUNK_SIZE || "1200", 10),
         ragChunkOverlap: parseInt(process.env.RAG_CHUNK_OVERLAP || "200", 10),
         ragMaxChunks: parseInt(process.env.RAG_MAX_CHUNKS || "500", 10),
         ragTopK: parseInt(process.env.RAG_TOP_K || "5", 10),
-
-        chromaServerHost: process.env.CHROMA_SERVER_HOST || "127.0.0.1",
-        chromaServerPort: parseInt(process.env.CHROMA_SERVER_PORT || "8002", 10),
-        chromaServerUrl:
-            process.env.CHROMA_SERVER_URL ||
-            `http://${process.env.CHROMA_SERVER_HOST || "127.0.0.1"}:${parseInt(process.env.CHROMA_SERVER_PORT || "8002", 10)}`,
-        chromaAutoStart: (process.env.CHROMA_AUTO_START || "true").toLowerCase() !== "false",
     };
 
     return cachedSettings;

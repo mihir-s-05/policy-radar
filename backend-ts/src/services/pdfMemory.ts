@@ -1,73 +1,24 @@
-import { ChromaClient, Collection, IncludeEnum } from "chromadb";
-import OpenAI from "openai";
 import crypto from "crypto";
 import { getSettings } from "../config.js";
-import { ensureChromaServerRunning } from "./chromaServer.js";
+import {
+    initVectorDb,
+    insertPdfChunk,
+    checkDocumentExists,
+    deleteDocumentChunks,
+    deleteSessionChunks,
+    searchVectorsBySession,
+    getChunksByIds,
+    listEmbeddingKeys,
+} from "../models/database.js";
+import { embedTexts, type EmbeddingProvider } from "./embeddings.js";
 
 let pdfMemoryStore: PdfMemoryStore | null = null;
 
 export class PdfMemoryStore {
     private settings = getSettings();
-    private client: ChromaClient;
-    private collection: Collection | null = null;
-    private openai: OpenAI;
-    private chromaHealthy = true;
-    private chromaRetryAfter = 0;
-    private chromaFailures = 0;
 
     constructor() {
-        const serverUrl = this.settings.chromaServerUrl;
-        this.client = new ChromaClient({
-            path: serverUrl,
-        });
-        this.openai = new OpenAI({ apiKey: this.settings.openaiApiKey });
-        console.log(`PDF memory store initialized with Chroma at ${serverUrl}`);
-    }
-
-    private markChromaUnavailable(message?: string): void {
-        this.chromaHealthy = false;
-        this.chromaFailures += 1;
-        const backoffMs = Math.min(30000, 1000 * Math.pow(2, this.chromaFailures));
-        this.chromaRetryAfter = Date.now() + backoffMs;
-        if (message) {
-            console.warn(`Chroma unavailable: ${message}`);
-        }
-    }
-
-    private async getCollection(): Promise<Collection | null> {
-        const now = Date.now();
-        if (!this.chromaHealthy && now < this.chromaRetryAfter) {
-            return null;
-        }
-
-        try {
-            const ready = await ensureChromaServerRunning();
-            if (!ready) {
-                return null;
-            }
-            if (!this.collection) {
-                this.collection = await this.client.getOrCreateCollection({
-                    name: this.settings.ragCollection,
-                    metadata: { "hnsw:space": "cosine" },
-                });
-            }
-            this.chromaHealthy = true;
-            this.chromaFailures = 0;
-            return this.collection;
-        } catch (error) {
-            this.markChromaUnavailable((error as Error).message);
-            return null;
-        }
-    }
-
-    private whereAll(filters: Record<string, string | undefined>): Record<string, unknown> {
-        const parts = Object.entries(filters)
-            .filter(([, v]) => v !== undefined)
-            .map(([k, v]) => ({ [k]: v }));
-
-        if (!parts.length) return {};
-        if (parts.length === 1) return parts[0];
-        return { $and: parts };
+        console.log("PDF memory store initialized with sqlite-vec (local embeddings)");
     }
 
     private normalizeText(text: string): string {
@@ -103,7 +54,10 @@ export class PdfMemoryStore {
         if (!text) return [];
 
         const chunkSize = this.chooseChunkSize(text.length);
-        const overlap = Math.max(0, Math.min(this.settings.ragChunkOverlap, Math.floor(chunkSize / 3)));
+        const overlap = Math.max(
+            0,
+            Math.min(this.settings.ragChunkOverlap, Math.floor(chunkSize / 3))
+        );
 
         const chunks: string[] = [];
         let start = 0;
@@ -119,46 +73,38 @@ export class PdfMemoryStore {
         return chunks;
     }
 
-    private makeChunkIds(sessionId: string, docKey: string, count: number): string[] {
-        const keyHash = crypto.createHash("sha1").update(docKey).digest("hex");
-        const prefix = sessionId.replace(/-/g, "").slice(0, 12);
-        return Array.from({ length: count }, (_, i) => `${prefix}_${keyHash}_${i}`);
-    }
+    private async embedTexts(
+        texts: string[],
+        embeddingConfig?: { provider?: EmbeddingProvider | null; model?: string | null; apiKey?: string | null; baseUrl?: string | null } | null
+    ): Promise<{ embeddingKey: string; vectors: Float32Array[] } | null> {
+        try {
+            const provider = (embeddingConfig?.provider || (this.settings.embeddingProvider as EmbeddingProvider) || "local") as EmbeddingProvider;
+            const model = String(embeddingConfig?.model || this.settings.embeddingModel || "").trim();
+            const apiKey = embeddingConfig?.apiKey ?? null;
+            const baseUrl = embeddingConfig?.baseUrl ?? null;
 
-    private async embedTexts(texts: string[]): Promise<number[][] | null> {
-        if (!this.settings.openaiApiKey) {
-            console.error("Missing OPENAI_API_KEY. Cannot embed PDF text.");
+            const embedded = await embedTexts(texts, { provider, model, apiKey, baseUrl });
+            if (embedded?.vectors?.length) {
+                initVectorDb(embedded.embeddingKey, embedded.vectors[0].length);
+            }
+            return embedded;
+        } catch (error) {
+            console.error(`Embedding failed: ${error}`);
             return null;
         }
-
-        let backoff = this.settings.initialBackoff * 1000;
-
-        for (let attempt = 0; attempt <= this.settings.maxRetries; attempt++) {
-            try {
-                const response = await this.openai.embeddings.create({
-                    model: this.settings.embeddingModel,
-                    input: texts,
-                });
-                return response.data.map((item) => item.embedding);
-            } catch (error) {
-                if (attempt >= this.settings.maxRetries) {
-                    console.error(`Embedding failed after retries: ${error}`);
-                    return null;
-                }
-                await new Promise((r) => setTimeout(r, backoff));
-                backoff = Math.min(backoff * 2, 30000);
-            }
-        }
-
-        return null;
     }
 
     async addDocument(
         sessionId: string,
         docKey: string,
         text: string,
-        metadata?: Record<string, string>
-    ): Promise<{ status: "indexed" | "skipped" | "failed"; error?: string; reason?: string }> {
+        metadata?: Record<string, string>,
+        embeddingConfig?: { provider?: EmbeddingProvider | null; model?: string | null; apiKey?: string | null; baseUrl?: string | null } | null
+    ): Promise<{
+        status: "indexed" | "skipped" | "failed";
+        error?: string;
+        reason?: string;
+    }> {
         if (!sessionId || !docKey || !text) {
             return { status: "skipped", reason: "missing_inputs" };
         }
@@ -169,126 +115,180 @@ export class PdfMemoryStore {
         }
 
         const docHash = crypto.createHash("sha256").update(text).digest("hex");
-        const baseMeta: Record<string, string> = {
-            session_id: sessionId,
-            doc_key: docKey,
-            doc_hash: docHash,
-            ...metadata,
-        };
 
-        const collection = await this.getCollection();
-        if (!collection) {
-            return { status: "failed", error: "Chroma server unavailable" };
+        // Check for existing document with same hash (deduplication)
+        try {
+            const embedded = await this.embedTexts([chunks[0]], embeddingConfig);
+            if (!embedded) {
+                return { status: "failed", error: "embedding_failed" };
+            }
+            const embeddingKey = embedded.embeddingKey;
+
+            if (checkDocumentExists(embeddingKey, sessionId, docKey, docHash)) {
+                console.log(`PDF already indexed for ${sessionId} (${docKey})`);
+                return { status: "skipped", reason: "already_indexed" };
+            }
+        } catch (error) {
+            return { status: "failed", error: String(error) };
         }
 
-        const existing = await collection.get({
-            where: this.whereAll({
-                session_id: sessionId,
-                doc_key: docKey,
-                doc_hash: docHash,
-            }),
-            limit: 1,
-        });
-
-        if (existing.ids?.length) {
-            console.log(`PDF already indexed for ${sessionId} (${docKey})`);
-            return { status: "skipped", reason: "already_indexed" };
-        }
-
-        const embeddings: number[][] = [];
-        const batchSize = 32;
+        // Generate embeddings in batches
+        const embeddings: Float32Array[] = [];
+        let embeddingKey: string | null = null;
+        const batchSize = 16; // Smaller batch for local model
 
         for (let i = 0; i < chunks.length; i += batchSize) {
             const batch = chunks.slice(i, i + batchSize);
-            const batchEmbeddings = await this.embedTexts(batch);
-            if (!batchEmbeddings) {
+            const embedded = await this.embedTexts(batch, embeddingConfig);
+            if (!embedded) {
                 return { status: "failed", error: "embedding_failed" };
             }
-            embeddings.push(...batchEmbeddings);
+            embeddingKey = embeddingKey || embedded.embeddingKey;
+            embeddings.push(...embedded.vectors);
         }
 
-        const ids = this.makeChunkIds(sessionId, docKey, chunks.length);
-        const metadatas = chunks.map((_, index) => ({
-            ...baseMeta,
-            chunk_index: String(index),
-            total_chunks: String(chunks.length),
-        }));
+        if (!embeddingKey) {
+            return { status: "failed", error: "embedding_failed" };
+        }
 
+        // Delete any existing chunks for this doc_key (handles updates)
         try {
-            await collection.delete({
-                where: this.whereAll({ session_id: sessionId, doc_key: docKey }),
-            });
+            deleteDocumentChunks(embeddingKey, sessionId, docKey);
         } catch {
+            // Ignore deletion errors
         }
 
-        await collection.upsert({
-            ids,
-            documents: chunks,
-            metadatas,
-            embeddings,
-        });
+        // Insert all chunks
+        try {
+            const chunkMetadata = {
+                source_url: metadata?.source_url,
+                source_type: metadata?.source_type,
+                pdf_url: metadata?.pdf_url,
+            };
 
-        console.log(
-            `Indexed ${chunks.length} PDF chunks for session ${sessionId} (${docKey})`
-        );
+            console.log(`[PDF Memory] Inserting ${chunks.length} chunks for docKey: ${docKey}, sessionId: ${sessionId}, embeddingKey: ${embeddingKey}`);
+            
+            for (let i = 0; i < chunks.length; i++) {
+                try {
+                    console.log(`[PDF Memory] Inserting chunk ${i + 1}/${chunks.length} for ${docKey}`);
+                    const chunkId = insertPdfChunk(
+                        embeddingKey,
+                        sessionId,
+                        docKey,
+                        docHash,
+                        i,
+                        chunks.length,
+                        chunks[i],
+                        embeddings[i],
+                        chunkMetadata
+                    );
+                    console.log(`[PDF Memory] Successfully inserted chunk ${i + 1}/${chunks.length} with ID ${chunkId}`);
+                } catch (chunkError) {
+                    const errorDetails = {
+                        chunkIndex: i,
+                        totalChunks: chunks.length,
+                        docKey,
+                        sessionId,
+                        error: String(chunkError),
+                        errorType: chunkError instanceof Error ? chunkError.constructor.name : typeof chunkError,
+                        stack: chunkError instanceof Error ? chunkError.stack : undefined,
+                    };
+                    console.error(`[PDF Memory] Failed to insert chunk ${i + 1}/${chunks.length}:`, JSON.stringify(errorDetails, null, 2));
+                    throw chunkError; // Re-throw to be caught by outer catch
+                }
+            }
 
-        return { status: "indexed" };
+            console.log(
+                `[PDF Memory] Successfully indexed ${chunks.length} PDF chunks for session ${sessionId} (${docKey})`
+            );
+            return { status: "indexed" };
+        } catch (error) {
+            const errorDetails = {
+                docKey,
+                sessionId,
+                chunksCount: chunks.length,
+                error: String(error),
+                errorType: error instanceof Error ? error.constructor.name : typeof error,
+                stack: error instanceof Error ? error.stack : undefined,
+            };
+            console.error(`[PDF Memory] Failed to index PDF chunks:`, JSON.stringify(errorDetails, null, 2));
+            return { status: "failed", error: String(error) };
+        }
     }
 
     async query(
         sessionId: string,
         queryText: string,
-        topK?: number
-    ): Promise<{ text: string; score: number | null; metadata: Record<string, unknown> }[]> {
+        topK?: number,
+        embeddingConfig?: { provider?: EmbeddingProvider | null; model?: string | null; apiKey?: string | null; baseUrl?: string | null } | null
+    ): Promise<
+        { text: string; score: number | null; metadata: Record<string, unknown> }[]
+    > {
         if (!sessionId || !queryText) return [];
 
         const k = topK || this.settings.ragTopK;
-        const embeddings = await this.embedTexts([queryText]);
-        if (!embeddings) return [];
+        const embedded = await this.embedTexts([queryText], embeddingConfig);
+        if (!embedded || embedded.vectors.length === 0) return [];
 
-        const collection = await this.getCollection();
-        if (!collection) {
+        try {
+            // Search vectors
+            const vectorResults = searchVectorsBySession(
+                embedded.embeddingKey,
+                sessionId,
+                embedded.vectors[0],
+                k
+            );
+
+            if (vectorResults.length === 0) return [];
+
+            // Fetch metadata for matched chunks
+            const chunkIds = vectorResults.map((r) => r.chunkId);
+            const chunks = getChunksByIds(embedded.embeddingKey, chunkIds);
+            const chunkMap = new Map(chunks.map((c) => [c.id, c]));
+
+            // Build results with scores
+            // Cosine distance is in [0, 2], convert to similarity score
+            // Score = 1 - distance (matching ChromaDB's behavior)
+            return vectorResults.map((r) => {
+                const chunk = chunkMap.get(r.chunkId);
+                const score = 1.0 - r.distance;
+                return {
+                    text: chunk?.content || "",
+                    score,
+                    metadata: {
+                        session_id: chunk?.session_id,
+                        doc_key: chunk?.doc_key,
+                        doc_hash: chunk?.doc_hash,
+                        chunk_index: String(chunk?.chunk_index),
+                        total_chunks: String(chunk?.total_chunks),
+                        source_url: chunk?.source_url || "",
+                        source_type: chunk?.source_type || "",
+                        pdf_url: chunk?.pdf_url || "",
+                    },
+                };
+            });
+        } catch (error) {
+            console.error(`Vector search failed: ${error}`);
             return [];
         }
-
-        const results = await collection.query({
-            queryEmbeddings: embeddings,
-            nResults: k,
-            where: { session_id: sessionId },
-            include: [IncludeEnum.Documents, IncludeEnum.Metadatas, IncludeEnum.Distances],
-        });
-
-        const matches: { text: string; score: number | null; metadata: Record<string, unknown> }[] = [];
-
-        const docs = results.documents?.[0] || [];
-        const metas = results.metadatas?.[0] || [];
-        const distances = results.distances?.[0] || [];
-
-        for (let i = 0; i < docs.length; i++) {
-            const distance = distances[i];
-            const score = distance !== undefined ? 1.0 - distance : null;
-            matches.push({
-                text: docs[i] || "",
-                score,
-                metadata: (metas[i] as Record<string, unknown>) || {},
-            });
-        }
-
-        return matches;
     }
 
     async deleteSession(sessionId: string): Promise<void> {
         if (!sessionId) return;
 
-        const collection = await this.getCollection();
-        if (!collection) {
-            return;
-        }
         try {
-            await collection.delete({ where: { session_id: sessionId } });
-        } catch {
+            const keys = listEmbeddingKeys();
+            for (const key of keys) {
+                try {
+                    deleteSessionChunks(key, sessionId);
+                } catch {
+                    // Best-effort cleanup
+                }
+            }
+            console.log(`Cleared PDF memory for session ${sessionId}`);
+        } catch (error) {
+            console.error(`Failed to delete session chunks: ${error}`);
         }
-        console.log(`Cleared PDF memory for session ${sessionId}`);
     }
 }
 

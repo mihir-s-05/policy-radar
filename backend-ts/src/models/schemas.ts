@@ -79,6 +79,11 @@ export const ChatRequestSchema = z.object({
     api_mode: z.enum(["responses", "chat_completions"]).nullable().optional(),
     custom_model: CustomModelConfigSchema.nullable().optional(),
     api_key: z.string().nullable().optional(),
+    // Embeddings config for PDF RAG (local Transformers.js or OpenAI-compatible embeddings endpoint).
+    embedding_provider: z.enum(["local", "openai", "gemini", "huggingface", "custom"]).nullable().optional(),
+    embedding_model: z.string().nullable().optional(),
+    embedding_custom_model: CustomModelConfigSchema.nullable().optional(),
+    embedding_api_key: z.string().nullable().optional(),
 });
 
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
@@ -183,7 +188,22 @@ export const ConfigResponseSchema = z.object({
     model: z.string(),
     available_models: z.array(z.string()).default([]),
     default_api_mode: z.enum(["responses", "chat_completions"]).default("responses"),
+    embedding_provider: z.enum(["local", "openai", "gemini", "huggingface", "custom"]).default("local"),
+    embedding_model: z.string().default("Xenova/all-MiniLM-L6-v2"),
     providers: z.record(ProviderInfoSchema).default({}),
+    embedding_providers: z
+        .record(
+            z.object({
+                name: z.string(),
+                display_name: z.string(),
+                base_url: z.string().nullable().optional(),
+                models: z.array(z.string()).default([]),
+                api_key_detected: z.boolean().default(false),
+                supported: z.boolean().default(true),
+                notes: z.string().nullable().optional(),
+            })
+        )
+        .default({}),
 });
 
 export type ConfigResponse = z.infer<typeof ConfigResponseSchema>;

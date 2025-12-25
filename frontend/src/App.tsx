@@ -5,7 +5,7 @@ import { getSessionMessages, updateMessage, getConfig } from "./api/client";
 import { ChatInput, ChatSidebar, MessageList, WorkLog, SourceCards, loadSourcesFromStorage, SettingsModal, loadSettings } from "./components";
 import type { UserSettings } from "./components";
 import { FoxingOverlay } from "./components/FoxingOverlay";
-import type { Message, SourceSelection, SourceItem, ProviderInfo } from "./types";
+import type { Message, SourceSelection, SourceItem, ProviderInfo, EmbeddingProviderInfo } from "./types";
 import { PanelLeft, PanelRightClose } from "lucide-react";
 import { Button } from "./components/ui/Button";
 
@@ -46,6 +46,7 @@ function App() {
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const isNewSessionRef = useRef(false);
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
+  const [embeddingProviders, setEmbeddingProviders] = useState<Record<string, EmbeddingProviderInfo>>({});
 
   useEffect(() => {
     getConfig()
@@ -55,9 +56,14 @@ function App() {
         setUserSettings((prev) => ({
           ...prev,
           model: prev.model || config.model,
+          embeddingProvider: prev.embeddingProvider || config.embedding_provider,
+          embeddingModel: prev.embeddingModel || config.embedding_model,
         }));
         if (config.providers) {
           setProviders(config.providers);
+        }
+        if (config.embedding_providers) {
+          setEmbeddingProviders(config.embedding_providers);
         }
       })
       .catch((err) => console.error("Failed to load config:", err));
@@ -159,6 +165,12 @@ function App() {
     const apiMode = provider === "openai" ? userSettings.apiMode : "chat_completions";
     const apiKey = userSettings.apiKeys?.[provider as keyof typeof userSettings.apiKeys] || undefined;
 
+    const embeddingProvider = userSettings.embeddingProvider || "local";
+    const embeddingCustomModel = embeddingProvider === "custom"
+      ? userSettings.embeddingCustomModels?.find(m => m.model_name === (userSettings.embeddingModel || ""))
+      : undefined;
+    const embeddingApiKey = userSettings.embeddingApiKeys?.[embeddingProvider as keyof NonNullable<typeof userSettings.embeddingApiKeys>] || undefined;
+
     await sendMessage(
       message,
       nextSources,
@@ -168,7 +180,13 @@ function App() {
       apiMode,
       customModel,
       apiKey,
-      provider
+      provider,
+      {
+        provider: embeddingProvider,
+        model: userSettings.embeddingModel,
+        custom_model: embeddingCustomModel,
+        api_key: embeddingApiKey,
+      }
     );
     isNewSessionRef.current = false;
     await refreshSessions().catch(() => undefined);
@@ -314,6 +332,9 @@ function App() {
                 onSettingsChange={setUserSettings}
                 providers={providers}
                 defaultApiMode="responses"
+                embeddingProviders={embeddingProviders}
+                defaultEmbeddingProvider="local"
+                defaultEmbeddingModel="Xenova/all-MiniLM-L6-v2"
               />
             }
           />

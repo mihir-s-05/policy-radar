@@ -8,7 +8,6 @@ config();
 import { getSettings } from "./config.js";
 import { initDb } from "./models/database.js";
 import { router } from "./api/index.js";
-import { ensureChromaServerRunning } from "./services/chromaServer.js";
 
 const settings = getSettings();
 
@@ -39,9 +38,6 @@ initDb();
 log("INFO", "Database initialized");
 log("INFO", `Using OpenAI model: ${settings.openaiModel}`);
 log("INFO", "API ready!");
-ensureChromaServerRunning().catch((error) => {
-    console.error(`Chroma auto-start failed: ${error}`);
-});
 
 const app = new Hono();
 app.use(

@@ -3,7 +3,6 @@
  * Allows frontend to cancel ongoing backend operations.
  */
 
-// Map of session ID to AbortController
 const activeRequests = new Map<string, AbortController>();
 
 /**
@@ -11,7 +10,6 @@ const activeRequests = new Map<string, AbortController>();
  * If there's already an active request for this session, it will be cancelled first.
  */
 export function registerRequest(sessionId: string): AbortController {
-    // Cancel any existing request for this session
     const existing = activeRequests.get(sessionId);
     if (existing) {
         existing.abort();

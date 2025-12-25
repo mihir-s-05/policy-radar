@@ -27,11 +27,13 @@ A research chatbot for tracking U.S. federal policy activity across multiple off
 | `ANTHROPIC_API_KEY` | No | - | Anthropic API key |
 | `GOOGLE_API_KEY` | No | - | Google Gemini API key |
 | `OPENAI_MODEL` | No | `gpt-5.2` | Default OpenAI model |
-| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model for PDF RAG |
+| `EMBEDDING_PROVIDER` | No | `local` | Embedding provider for PDF RAG: `local`, `openai`, `gemini`, `huggingface`, or `custom` |
+| `EMBEDDING_MODEL` | No | `Xenova/all-MiniLM-L6-v2` | Embedding model id (Transformers.js model id for `local`, or provider model name for OpenAI-compatible endpoints) |
+| `EMBEDDING_BASE_URL` | No | - | Optional OpenAI-compatible base URL for embeddings (primarily for `custom`; `openai`/`gemini` use built-in base URLs) |
+| `HUGGINGFACE_API_KEY` | No | - | Hugging Face token used when `EMBEDDING_PROVIDER=huggingface` |
+| `HUGGINGFACE_ENDPOINT_URL` | No | - | Optional Hugging Face endpoint URL (e.g. dedicated Inference Endpoint) |
 | `DEFAULT_API_MODE` | No | `responses` | OpenAI API mode: `responses` or `chat_completions` |
 | `PORT` | No | `8001` | Backend port |
-| `RAG_PERSIST_DIR` | No | `./chroma` | ChromaDB storage path |
-| `RAG_COLLECTION` | No | `pdf_memory` | ChromaDB collection name |
 | `RAG_CHUNK_SIZE` | No | `1200` | PDF chunk size (chars) |
 | `RAG_CHUNK_OVERLAP` | No | `200` | PDF chunk overlap (chars) |
 | `RAG_MAX_CHUNKS` | No | `500` | Max chunks per PDF |
@@ -50,6 +52,7 @@ The UI settings panel lets you:
 - Switch OpenAI API mode between Responses and Chat Completions.
 - Add or remove provider model names, with validation against provider APIs.
 - Add custom OpenAI-compatible endpoints (vLLM, Ollama, LM Studio, etc.).
+- Configure embedding provider/model (including custom OpenAI-compatible embedding endpoints) used for PDF RAG.
 - Override API keys locally (stored in browser local storage).
 
 ## Quick Start
@@ -119,6 +122,14 @@ npm run dev
     "model_name": "llama3.2",
     "api_key": "optional"
   },
+  "embedding_provider": "local",
+  "embedding_model": "Xenova/all-MiniLM-L6-v2",
+  "embedding_custom_model": {
+    "base_url": "http://localhost:11434/v1",
+    "model_name": "nomic-embed-text",
+    "api_key": "optional"
+  },
+  "embedding_api_key": "optional",
   "api_key": "optional"
 }
 ```
@@ -158,7 +169,7 @@ policy_chatbotv2/
 - Keys are never embedded in the frontend bundle.
 - All government API calls are made from the backend.
 - SQLite stores session data locally.
-- ChromaDB stores PDF embeddings locally under `RAG_PERSIST_DIR`.
+- PDF RAG embeddings are generated locally (Transformers.js) and stored in SQLite via sqlite-vec (tables are namespaced by embedding model + vector dimension).
 
 ## License
 
