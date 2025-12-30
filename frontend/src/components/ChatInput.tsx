@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, Check, Feather } from "lucide-react";
+import { ChevronDown, Check, Feather, Square } from "lucide-react";
 import type { SourceSelection } from "../types";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
@@ -16,6 +16,8 @@ import { cn } from "../lib/utils";
 interface ChatInputProps {
   onSend: (message: string, sources: SourceSelection, days: number, model: string) => void;
   isLoading: boolean;
+  isBusy?: boolean;
+  onStop?: () => void;
   sources: SourceSelection;
   days: number;
   model: string;
@@ -24,6 +26,7 @@ interface ChatInputProps {
   onDaysChange: (days: number) => void;
   onModelChange: (model: string) => void;
   settingsModal?: ReactNode;
+  embeddingModal?: ReactNode;
 }
 
 const SOURCE_OPTIONS: { key: keyof SourceSelection; label: string }[] = [
@@ -99,6 +102,8 @@ function saveSourcesToStorage(sources: SourceSelection): void {
 export function ChatInput({
   onSend,
   isLoading,
+  isBusy = false,
+  onStop,
   sources,
   days,
   model,
@@ -107,6 +112,7 @@ export function ChatInput({
   onDaysChange,
   onModelChange,
   settingsModal,
+  embeddingModal,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
 
@@ -158,22 +164,23 @@ export function ChatInput({
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Compose your inquiry..."
-            disabled={isLoading}
+            disabled={isBusy}
             className="min-h-[56px] w-full resize-none border-0 bg-transparent px-3 py-3 text-base shadow-none focus-visible:ring-0 md:text-sm ink-text"
             style={{ fontFamily: "'IM Fell English', serif" }}
           />
           <Button
-            type="submit"
+            type={isLoading ? "button" : "submit"}
             size="icon"
-            disabled={!message.trim() || isLoading}
+            onClick={isLoading ? onStop : undefined}
+            disabled={isLoading ? !onStop : !message.trim() || isBusy}
             className="h-10 w-10 shrink-0 rounded-full btn-wax self-center">
 
             {isLoading ? (
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              <Square className="h-4 w-4" />
             ) : (
               <Feather className="h-4 w-4" />
             )}
-            <span className="sr-only">Send message</span>
+            <span className="sr-only">{isLoading ? "Stop response" : "Send message"}</span>
           </Button>
         </form>
 
@@ -191,7 +198,7 @@ export function ChatInput({
                   variant="outline"
                   size="sm"
                   className="h-8 w-[140px] justify-between text-xs btn-parchment"
-                  disabled={isLoading}
+                  disabled={isBusy}
                 >
                   <span style={{ fontFamily: "'Spectral', serif" }}>{archivesLabel}</span>
                   <ChevronDown className="ml-2 h-3 w-3 opacity-50" />
@@ -260,7 +267,7 @@ export function ChatInput({
             <Select
               value={String(days)}
               onValueChange={(value) => onDaysChange(Number(value))}
-              disabled={isLoading}
+              disabled={isBusy}
             >
               <SelectTrigger className="h-8 w-[80px] text-xs btn-parchment border-sepia-light/50">
                 <SelectValue placeholder="Select Time" />
@@ -286,7 +293,7 @@ export function ChatInput({
             <Select
               value={model}
               onValueChange={onModelChange}
-              disabled={isLoading}
+              disabled={isBusy}
             >
               <SelectTrigger className="h-8 w-[120px] text-xs btn-parchment border-sepia-light/50">
                 <SelectValue placeholder="Select Model" />
@@ -300,6 +307,13 @@ export function ChatInput({
               </SelectContent>
             </Select>
           </div>
+
+          {embeddingModal && (
+            <>
+              <div className="h-4 w-px bg-sepia-light/30" />
+              {embeddingModal}
+            </>
+          )}
 
           {settingsModal && (
             <>

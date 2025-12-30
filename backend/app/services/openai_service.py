@@ -3,10 +3,11 @@ import json
 import logging
 import re
 from typing import Optional, AsyncGenerator
-from openai import OpenAI
+import httpx
+from openai import AsyncOpenAI
 
 from ..config import get_settings
-from ..models.schemas import SourceItem, Step, SourceSelection
+from ..models.schemas import SourceItem, Step, SourceSelection, EmbeddingConfig
 from .tool_executor import ToolExecutor, get_tool_label
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,17 @@ SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "datagov": "data.gov",
     "doj": "DOJ",
     "searchgov": "Search.gov",
+}
+SOURCE_DESCRIPTIONS: dict[str, str] = {
+    "regulations": "Rulemakings, dockets, proposed/final rules, agency regulatory actions",
+    "govinfo": "Official federal publications (incl. Federal Register) and broad gov documents",
+    "congress": "Bills, legislation status, sponsors, committees, roll call votes",
+    "federal_register": "Federal Register rules, notices, and presidential documents",
+    "usaspending": "Federal awards/contracts/grants, recipients, agencies, award totals",
+    "fiscal_data": "Treasury fiscal time series (debt, receipts, outlays, interest rates)",
+    "datagov": "Open data catalog and datasets from data.gov",
+    "doj": "DOJ press releases and public enforcement announcements",
+    "searchgov": "Broad search across .gov sites for agency pages and web content",
 }
 
 TOOL_TO_SOURCE: dict[str, Optional[str]] = {
@@ -504,15 +516,57 @@ class OpenAIService:
         session_id: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        embedding_config: Optional[EmbeddingConfig] = None,
     ):
         settings = get_settings()
         effective_api_key = api_key or settings.openai_api_key
-        if base_url:
-            self.client = OpenAI(api_key=effective_api_key, base_url=base_url)
-        else:
-            self.client = OpenAI(api_key=effective_api_key)
+        try:
+            if base_url:
+                self.client = AsyncOpenAI(api_key=effective_api_key, base_url=base_url)
+            else:
+                self.client = AsyncOpenAI(api_key=effective_api_key)
+        except TypeError as exc:
+            if "proxies" not in str(exc):
+                raise
+            http_client = httpx.AsyncClient()
+            if base_url:
+                self.client = AsyncOpenAI(
+                    api_key=effective_api_key,
+                    base_url=base_url,
+                    http_client=http_client,
+                )
+            else:
+                self.client = AsyncOpenAI(
+                    api_key=effective_api_key,
+                    http_client=http_client,
+                )
         self.model = settings.openai_model
-        self.tool_executor = ToolExecutor(session_id=session_id)
+        self.tool_executor = ToolExecutor(
+            session_id=session_id,
+            embedding_config=embedding_config,
+        )
+
+    async def _check_cancel(self, cancel_event: Optional[asyncio.Event]) -> None:
+        if cancel_event and cancel_event.is_set():
+            raise asyncio.CancelledError()
+
+    async def _await_with_cancel(self, coro, cancel_event: Optional[asyncio.Event]):
+        if not cancel_event:
+            return await coro
+
+        task = asyncio.create_task(coro)
+        cancel_task = asyncio.create_task(cancel_event.wait())
+        done, _ = await asyncio.wait(
+            {task, cancel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if cancel_task in done:
+            task.cancel()
+            raise asyncio.CancelledError()
+
+        cancel_task.cancel()
+        return await task
 
     def _truncate_for_model(self, text: str) -> tuple[str, bool]:
         if not text or len(text) <= MAX_TOOL_TEXT_CHARS:
@@ -773,6 +827,7 @@ Please search for relevant information and provide a comprehensive answer with c
         message: str,
         allowed_sources: set[str],
         model_to_use: str,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> tuple[set[str], Optional[str]]:
         if not allowed_sources:
             return set(), None
@@ -780,83 +835,265 @@ Please search for relevant information and provide a comprehensive answer with c
             return set(allowed_sources), "Only one source available."
 
         options_text = "\n".join(
-            f"- {key}: {SOURCE_DISPLAY_NAMES[key]}"
+            f"- {key}: {SOURCE_DISPLAY_NAMES[key]} - {SOURCE_DESCRIPTIONS.get(key, '')}"
             for key in sorted(allowed_sources)
         )
 
-        rubric = """Routing guidance (choose all that apply):
-- regulations: rulemakings, dockets, proposed/final rules, CFR changes, agency regulatory actions
-- govinfo: official publications, broad federal documents; good companion for regulations/federal register
-- federal_register: rules/notices/presidential documents specifically in the Federal Register
-- congress: bills, legislation status, roll call votes, sponsors, committees
-- usaspending: federal awards/contracts/grants, recipients, agencies, award totals
-- fiscal_data: Treasury fiscal time series (debt, receipts, outlays, interest rates)
-- datagov: datasets, open data resources, data catalog discovery
-- doj: DOJ press releases, enforcement announcements, investigations (public-facing)
-- searchgov: broad web search across .gov sites (when query is broad or agency-specific web pages are needed)"""
-
-        selector_messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You route user queries to the most relevant data sources. "
-                    "Use the routing guidance and choose the sources most likely to contain authoritative results. "
-                    "Return STRICT JSON only: {\"sources\": [\"source_key\", ...], \"rationale\": \"short\"}. "
-                    "Choose 1-6 sources; choose fewer when the query is narrow. Only choose from the allowed list."
-                ),
-            },
+        selector_instructions = (
+            "You route user queries to the most relevant data sources. "
+            "Use the routing guidance and choose the sources most likely to contain authoritative results. "
+            "Return STRICT JSON only: {\"sources\":[\"source_key\",...],\"rationale\":\"short\"}. "
+            "Choose 1-6 sources; choose fewer when the query is narrow. "
+            "Only choose from the allowed list. "
+            "Ensure the JSON is complete and closed with a final }"
+        )
+        selector_input = [
             {
                 "role": "user",
-                "content": f"User query: {message}\n\nAllowed sources:\n{options_text}\n\n{rubric}",
+                "content": (
+                    f"User query: {message}\n\n"
+                    f"Allowed sources:\n{options_text}\n\n"
+                    "Routing guidance:\n"
+                    "- regulations: rulemakings, dockets, proposed/final rules, agency regulatory actions\n"
+                    "- govinfo: official publications and broad federal documents\n"
+                    "- federal_register: rules, notices, presidential documents in the Federal Register\n"
+                    "- congress: bills, legislation status, roll call votes, sponsors, committees\n"
+                    "- usaspending: federal awards, contracts, grants, recipients, agencies, award totals\n"
+                    "- fiscal_data: Treasury fiscal time series (debt, receipts, outlays, interest rates)\n"
+                    "- datagov: datasets, open data resources, data catalog discovery\n"
+                    "- doj: DOJ press releases, enforcement announcements\n"
+                    "- searchgov: broad .gov site search"
+                ),
             },
         ]
+        response_schema = {
+            "name": "source_selection",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": sorted(allowed_sources),
+                        },
+                        "minItems": 1,
+                        "maxItems": 6,
+                    },
+                    "rationale": {"type": "string", "maxLength": 120},
+                },
+                "required": ["sources", "rationale"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        }
 
         try:
-            response = self.client.chat.completions.create(
-                model=model_to_use,
-                messages=selector_messages,
-                temperature=0,
-                max_tokens=200,
-            )
+            await self._check_cancel(cancel_event)
+            response_kwargs = {
+                "model": model_to_use,
+                "instructions": selector_instructions,
+                "input": selector_input,
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": response_schema["name"],
+                        "strict": True,
+                        "schema": response_schema["schema"],
+                    }
+                },
+                "max_output_tokens": 400,
+            }
 
-            raw = response.choices[0].message.content or ""
+            response = None
+            last_error: Optional[Exception] = None
+            for _ in range(3):
+                try:
+                    response = await self._await_with_cancel(
+                        self.client.responses.create(**response_kwargs),
+                        cancel_event,
+                    )
+                    last_error = None
+                    break
+                except TypeError as exc:
+                    last_error = exc
+                    msg = str(exc).lower()
+                    if "text" in msg:
+                        response_kwargs.pop("text", None)
+                        continue
+                    if "max_output_tokens" in msg:
+                        response_kwargs.pop("max_output_tokens", None)
+                        continue
+                    if "instructions" in msg:
+                        response_kwargs.pop("instructions", None)
+                        response_kwargs["input"] = [
+                            {"role": "system", "content": selector_instructions},
+                            *response_kwargs["input"],
+                        ]
+                        continue
+                    raise
+                except Exception as exc:
+                    last_error = exc
+                    msg = str(exc).lower()
+                    logger.warning(
+                        "Auto source selection error (%s). Params: %s. Model: %s",
+                        str(exc),
+                        sorted(response_kwargs.keys()),
+                        model_to_use,
+                    )
+                    if "unsupported parameter" in msg and "text" in msg:
+                        response_kwargs.pop("text", None)
+                        continue
+                    if "unsupported parameter" in msg and "max_output_tokens" in msg:
+                        response_kwargs.pop("max_output_tokens", None)
+                        continue
+                    if "unsupported parameter" in msg and "instructions" in msg:
+                        response_kwargs.pop("instructions", None)
+                        response_kwargs["input"] = [
+                            {"role": "system", "content": selector_instructions},
+                            *response_kwargs["input"],
+                        ]
+                        continue
+                    raise
+
+            if response is None and last_error:
+                raise last_error
+
+            raw = getattr(response, "output_text", None) or ""
+            if not raw and hasattr(response, "output") and response.output is not None:
+                try:
+                    logger.warning(
+                        "Auto source selection response output: %s",
+                        json.dumps(response.output, default=str)[:2000],
+                    )
+                except Exception:
+                    pass
+                for item in response.output:
+                    if item.type == "message":
+                        for content in item.content:
+                            if content.type in ("output_text", "text"):
+                                raw = getattr(content, "text", None) or ""
+                                if raw:
+                                    break
+                    if raw:
+                        break
+                    if item.type in ("output_text", "text") and getattr(item, "text", None):
+                        raw = item.text
+                        break
             data = self._extract_json_object(raw) or {}
+            if not data and raw and "\"sources\"" in raw:
+                retry_instructions = (
+                    selector_instructions
+                    + " The previous response was invalid or truncated. "
+                    + "Return only a complete JSON object and keep the rationale <= 60 characters."
+                )
+                retry_input = [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Previous response was invalid JSON. "
+                            "Return STRICT JSON only: "
+                            "{\"sources\":[\"source_key\",...],\"rationale\":\"short\"}. "
+                            "Only choose from the allowed list.\n\n"
+                            f"User query: {message}\n\n"
+                            f"Allowed sources:\n{options_text}"
+                        ),
+                    }
+                ]
+                retry_kwargs = dict(response_kwargs)
+                retry_kwargs["instructions"] = retry_instructions
+                retry_kwargs["input"] = retry_input
+
+                response = None
+                last_error = None
+                for _ in range(2):
+                    try:
+                        response = await self._await_with_cancel(
+                            self.client.responses.create(**retry_kwargs),
+                            cancel_event,
+                        )
+                        last_error = None
+                        break
+                    except TypeError as exc:
+                        last_error = exc
+                        msg = str(exc).lower()
+                        if "text" in msg:
+                            retry_kwargs.pop("text", None)
+                            continue
+                        if "max_output_tokens" in msg:
+                            retry_kwargs.pop("max_output_tokens", None)
+                            continue
+                        if "instructions" in msg:
+                            retry_kwargs.pop("instructions", None)
+                            retry_kwargs["input"] = [
+                                {"role": "system", "content": retry_instructions},
+                                *retry_kwargs["input"],
+                            ]
+                            continue
+                        raise
+                    except Exception as exc:
+                        last_error = exc
+                        msg = str(exc).lower()
+                        logger.warning(
+                            "Auto source selection retry error (%s). Params: %s. Model: %s",
+                            str(exc),
+                            sorted(retry_kwargs.keys()),
+                            model_to_use,
+                        )
+                        if "unsupported parameter" in msg and "text" in msg:
+                            retry_kwargs.pop("text", None)
+                            continue
+                        if "unsupported parameter" in msg and "max_output_tokens" in msg:
+                            retry_kwargs.pop("max_output_tokens", None)
+                            continue
+                        if "unsupported parameter" in msg and "instructions" in msg:
+                            retry_kwargs.pop("instructions", None)
+                            retry_kwargs["input"] = [
+                                {"role": "system", "content": retry_instructions},
+                                *retry_kwargs["input"],
+                            ]
+                            continue
+                        raise
+
+                if response is None and last_error:
+                    raise last_error
+
+                if response is not None:
+                    raw = getattr(response, "output_text", None) or ""
+                    if not raw and hasattr(response, "output") and response.output is not None:
+                        for item in response.output:
+                            if item.type == "message":
+                                for content in item.content:
+                                    if content.type in ("output_text", "text"):
+                                        raw = getattr(content, "text", None) or ""
+                                        if raw:
+                                            break
+                            if raw:
+                                break
+                            if item.type in ("output_text", "text") and getattr(item, "text", None):
+                                raw = item.text
+                                break
+                    data = self._extract_json_object(raw) or {}
             chosen = [
                 s for s in (data.get("sources") or [])
                 if isinstance(s, str) and s in allowed_sources
             ]
             chosen_sources = set(chosen[:6])
             rationale = data.get("rationale")
-            return chosen_sources, rationale if isinstance(rationale, str) else None
+            if chosen_sources:
+                return chosen_sources, rationale if isinstance(rationale, str) else None
+            logger.warning(
+                "Auto source selection returned no valid sources. Raw output: %s Parsed: %s Allowed: %s",
+                raw,
+                data,
+                sorted(allowed_sources),
+            )
+            return set(allowed_sources), "No valid selection returned; using all allowed sources."
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.warning("Auto source selection failed; falling back to heuristics: %s", exc)
-
-        msg = message.lower()
-        picks: list[str] = []
-        if any(k in msg for k in ["bill", "hr", "h.r.", "s.", "senate", "house", "congress", "roll call", "vote"]):
-            picks.append("congress")
-        if any(k in msg for k in ["federal register", "fr ", "presidential", "executive order"]):
-            picks.append("federal_register")
-            picks.append("govinfo")
-        if any(k in msg for k in ["spending", "contract", "grant", "award", "procurement", "usaspending"]):
-            picks.append("usaspending")
-        if any(k in msg for k in ["debt", "deficit", "receipts", "outlays", "treasury", "interest rate"]):
-            picks.append("fiscal_data")
-        if any(k in msg for k in ["dataset", "data.gov", "csv", "open data"]):
-            picks.append("datagov")
-        if any(k in msg for k in ["doj", "justice department", "press release", "indictment"]):
-            picks.append("doj")
-        if any(k in msg for k in ["regulation", "rulemaking", "proposed rule", "final rule", "docket", "cfr"]):
-            picks.append("regulations")
-            picks.append("govinfo")
-
-        fallback = [p for p in picks if p in allowed_sources]
-        if not fallback:
-            fallback = [p for p in ["regulations", "govinfo"] if p in allowed_sources]
-        if not fallback:
-            fallback = list(sorted(allowed_sources))[:2]
-
-        return set(fallback[:4]), "Heuristic fallback."
+            logger.warning("Auto source selection failed; using all allowed sources: %s", exc)
+            return set(allowed_sources), "Auto selection failed; using all allowed sources."
 
     def _apply_days_default(self, tool_name: str, args: dict, days: int) -> None:
         if tool_name in TOOLS_WITH_DAYS_PARAM and "days" not in args:
@@ -899,6 +1136,7 @@ Please search for relevant information and provide a comprehensive answer with c
         days: int,
         model: Optional[str] = None,
         sources: Optional[SourceSelection] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str, str]:
         self.tool_executor.clear_sources()
         steps: list[Step] = []
@@ -917,6 +1155,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 message=message,
                 allowed_sources=allowed_sources,
                 model_to_use=model_to_use,
+                cancel_event=cancel_event,
             )
             if not selected_sources:
                 selected_sources = allowed_sources
@@ -948,20 +1187,26 @@ Please search for relevant information and provide a comprehensive answer with c
             {"role": "user", "content": formatted_message}
         ]
 
-        response = self.client.chat.completions.create(
-            model=model_to_use,
-            messages=messages,
-            tools=chat_tools if chat_tools else None,
-            tool_choice="auto" if chat_tools else None,
+        await self._check_cancel(cancel_event)
+        response = await self._await_with_cancel(
+            self.client.chat.completions.create(
+                model=model_to_use,
+                messages=messages,
+                tools=chat_tools if chat_tools else None,
+                tool_choice="auto" if chat_tools else None,
+            ),
+            cancel_event,
         )
 
         reasoning_summary = None
 
         while response.choices[0].message.tool_calls:
+            await self._check_cancel(cancel_event)
             tool_calls = response.choices[0].message.tool_calls
             messages.append(response.choices[0].message)
 
             for call in tool_calls:
+                await self._check_cancel(cancel_event)
                 step_counter += 1
                 step_id = str(step_counter)
                 tool_name = call.function.name
@@ -992,11 +1237,15 @@ Please search for relevant information and provide a comprehensive answer with c
                     "content": json.dumps(safe_result),
                 })
 
-            response = self.client.chat.completions.create(
-                model=model_to_use,
-                messages=messages,
-                tools=chat_tools if chat_tools else None,
-                tool_choice="auto" if chat_tools else None,
+            await self._check_cancel(cancel_event)
+            response = await self._await_with_cancel(
+                self.client.chat.completions.create(
+                    model=model_to_use,
+                    messages=messages,
+                    tools=chat_tools if chat_tools else None,
+                    tool_choice="auto" if chat_tools else None,
+                ),
+                cancel_event,
             )
 
         answer_text = response.choices[0].message.content or ""
@@ -1011,6 +1260,7 @@ Please search for relevant information and provide a comprehensive answer with c
         days: int,
         model: Optional[str] = None,
         sources: Optional[SourceSelection] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator[dict, None]:
         self.tool_executor.clear_sources()
         step_counter = 0
@@ -1039,6 +1289,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 message=message,
                 allowed_sources=allowed_sources,
                 model_to_use=model_to_use,
+                cancel_event=cancel_event,
             )
             if not selected_sources:
                 selected_sources = allowed_sources
@@ -1068,18 +1319,24 @@ Please search for relevant information and provide a comprehensive answer with c
             {"role": "user", "content": formatted_message}
         ]
 
-        response = self.client.chat.completions.create(
-            model=model_to_use,
-            messages=messages,
-            tools=chat_tools if chat_tools else None,
-            tool_choice="auto" if chat_tools else None,
+        await self._check_cancel(cancel_event)
+        response = await self._await_with_cancel(
+            self.client.chat.completions.create(
+                model=model_to_use,
+                messages=messages,
+                tools=chat_tools if chat_tools else None,
+                tool_choice="auto" if chat_tools else None,
+            ),
+            cancel_event,
         )
 
         while response.choices[0].message.tool_calls:
+            await self._check_cancel(cancel_event)
             tool_calls = response.choices[0].message.tool_calls
             messages.append(response.choices[0].message)
 
             for call in tool_calls:
+                await self._check_cancel(cancel_event)
                 step_counter += 1
                 step_id = str(step_counter)
                 tool_name = call.function.name
@@ -1121,16 +1378,21 @@ Please search for relevant information and provide a comprehensive answer with c
                     "content": json.dumps(safe_result),
                 })
 
-            response = self.client.chat.completions.create(
-                model=model_to_use,
-                messages=messages,
-                tools=chat_tools if chat_tools else None,
-                tool_choice="auto" if chat_tools else None,
+            await self._check_cancel(cancel_event)
+            response = await self._await_with_cancel(
+                self.client.chat.completions.create(
+                    model=model_to_use,
+                    messages=messages,
+                    tools=chat_tools if chat_tools else None,
+                    tool_choice="auto" if chat_tools else None,
+                ),
+                cancel_event,
             )
 
         final_text = response.choices[0].message.content or ""
         chunk_size = 50
         for i in range(0, len(final_text), chunk_size):
+            await self._check_cancel(cancel_event)
             chunk = final_text[i:i + chunk_size]
             yield {
                 "event": "assistant_delta",
@@ -1158,6 +1420,7 @@ Please search for relevant information and provide a comprehensive answer with c
         model: Optional[str] = None,
         sources: Optional[SourceSelection] = None,
         previous_response_id: Optional[str] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> tuple[str, list[SourceItem], Optional[str], list[Step], str, str]:
         self.tool_executor.clear_sources()
         steps: list[Step] = []
@@ -1176,6 +1439,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 message=message,
                 allowed_sources=allowed_sources,
                 model_to_use=model_to_use,
+                cancel_event=cancel_event,
             )
             if not selected_sources:
                 selected_sources = allowed_sources
@@ -1203,19 +1467,24 @@ Please search for relevant information and provide a comprehensive answer with c
 
         input_messages = [{"role": "user", "content": formatted_message}]
 
-        response = self.client.responses.create(
-            model=model_to_use,
-            instructions=SYSTEM_INSTRUCTIONS,
-            input=input_messages,
-            tools=available_tools,
-            parallel_tool_calls=False,
-            previous_response_id=previous_response_id,
+        await self._check_cancel(cancel_event)
+        response = await self._await_with_cancel(
+            self.client.responses.create(
+                model=model_to_use,
+                instructions=SYSTEM_INSTRUCTIONS,
+                input=input_messages,
+                tools=available_tools,
+                parallel_tool_calls=False,
+                previous_response_id=previous_response_id,
+            ),
+            cancel_event,
         )
 
         current_response_id = response.id
         reasoning_summary = None
 
         while True:
+            await self._check_cancel(cancel_event)
             function_calls = [
                 item for item in response.output
                 if item.type == "function_call"
@@ -1226,6 +1495,7 @@ Please search for relevant information and provide a comprehensive answer with c
 
             function_outputs = []
             for call in function_calls:
+                await self._check_cancel(cancel_event)
                 step_counter += 1
                 step_id = str(step_counter)
                 tool_name = call.name
@@ -1261,13 +1531,17 @@ Please search for relevant information and provide a comprehensive answer with c
                 if image_message:
                     function_outputs.append(image_message)
 
-            response = self.client.responses.create(
-                model=model_to_use,
-                instructions=SYSTEM_INSTRUCTIONS,
-                input=function_outputs,
-                tools=available_tools,
-                parallel_tool_calls=False,
-                previous_response_id=current_response_id,
+            await self._check_cancel(cancel_event)
+            response = await self._await_with_cancel(
+                self.client.responses.create(
+                    model=model_to_use,
+                    instructions=SYSTEM_INSTRUCTIONS,
+                    input=function_outputs,
+                    tools=available_tools,
+                    parallel_tool_calls=False,
+                    previous_response_id=current_response_id,
+                ),
+                cancel_event,
             )
             current_response_id = response.id
 
@@ -1291,6 +1565,7 @@ Please search for relevant information and provide a comprehensive answer with c
         model: Optional[str] = None,
         sources: Optional[SourceSelection] = None,
         previous_response_id: Optional[str] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> AsyncGenerator[dict, None]:
         self.tool_executor.clear_sources()
         step_counter = 0
@@ -1319,6 +1594,7 @@ Please search for relevant information and provide a comprehensive answer with c
                 message=message,
                 allowed_sources=allowed_sources,
                 model_to_use=model_to_use,
+                cancel_event=cancel_event,
             )
             if not selected_sources:
                 selected_sources = allowed_sources
@@ -1344,18 +1620,23 @@ Please search for relevant information and provide a comprehensive answer with c
 
         input_messages = [{"role": "user", "content": formatted_message}]
 
-        response = self.client.responses.create(
-            model=model_to_use,
-            instructions=SYSTEM_INSTRUCTIONS,
-            input=input_messages,
-            tools=available_tools,
-            parallel_tool_calls=False,
-            previous_response_id=previous_response_id,
+        await self._check_cancel(cancel_event)
+        response = await self._await_with_cancel(
+            self.client.responses.create(
+                model=model_to_use,
+                instructions=SYSTEM_INSTRUCTIONS,
+                input=input_messages,
+                tools=available_tools,
+                parallel_tool_calls=False,
+                previous_response_id=previous_response_id,
+            ),
+            cancel_event,
         )
 
         current_response_id = response.id
 
         while True:
+            await self._check_cancel(cancel_event)
             function_calls = [
                 item for item in response.output
                 if item.type == "function_call"
@@ -1366,6 +1647,7 @@ Please search for relevant information and provide a comprehensive answer with c
 
             function_outputs = []
             for call in function_calls:
+                await self._check_cancel(cancel_event)
                 step_counter += 1
                 step_id = str(step_counter)
                 tool_name = call.name
@@ -1413,13 +1695,17 @@ Please search for relevant information and provide a comprehensive answer with c
                 if image_message:
                     function_outputs.append(image_message)
 
-            response = self.client.responses.create(
-                model=model_to_use,
-                instructions=SYSTEM_INSTRUCTIONS,
-                input=function_outputs,
-                tools=available_tools,
-                parallel_tool_calls=False,
-                previous_response_id=current_response_id,
+            await self._check_cancel(cancel_event)
+            response = await self._await_with_cancel(
+                self.client.responses.create(
+                    model=model_to_use,
+                    instructions=SYSTEM_INSTRUCTIONS,
+                    input=function_outputs,
+                    tools=available_tools,
+                    parallel_tool_calls=False,
+                    previous_response_id=current_response_id,
+                ),
+                cancel_event,
             )
             current_response_id = response.id
 
@@ -1431,6 +1717,7 @@ Please search for relevant information and provide a comprehensive answer with c
                         text = content.text
                         chunk_size = 50
                         for i in range(0, len(text), chunk_size):
+                            await self._check_cancel(cancel_event)
                             chunk = text[i:i + chunk_size]
                             yield {
                                 "event": "assistant_delta",

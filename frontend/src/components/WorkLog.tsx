@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, Check, AlertTriangle, Loader2, Activity } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Check, AlertTriangle, Loader2, Activity, Square } from "lucide-react";
 import type { Step } from "../types";
 import { cn } from "../lib/utils";
 
@@ -10,6 +10,7 @@ interface WorkLogProps {
 
 function StepItem({ step }: { step: Step }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const isCancelled = Boolean((step.result_preview as { cancelled?: boolean } | undefined)?.cancelled);
 
   return (
     <div className="flex gap-3">
@@ -18,11 +19,13 @@ function StepItem({ step }: { step: Step }) {
           "flex h-6 w-6 items-center justify-center rounded-full border text-[10px]",
           step.status === "running" && "bg-parchment-200 border-sepia-light text-sepia-brown animate-pulse",
           step.status === "done" && "bg-leather text-parchment-100 border-leather-dark",
-          step.status === "error" && "bg-destructive/20 border-destructive/50 text-destructive"
+          step.status === "error" && !isCancelled && "bg-destructive/20 border-destructive/50 text-destructive",
+          isCancelled && "bg-parchment-200 border-sepia-light text-sepia-brown"
         )}>
           {step.status === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
           {step.status === "done" && <Check className="h-3 w-3" />}
-          {step.status === "error" && <AlertTriangle className="h-3 w-3" />}
+          {step.status === "error" && !isCancelled && <AlertTriangle className="h-3 w-3" />}
+          {isCancelled && <Square className="h-3 w-3" />}
         </div>
         <div className="w-px flex-1 bg-sepia-light/30 my-1" />
       </div>
@@ -38,6 +41,14 @@ function StepItem({ step }: { step: Step }) {
           >
             {step.label}
           </span>
+          {isCancelled && (
+            <span
+              className="text-[10px] italic ink-faded"
+              style={{ fontFamily: "'IM Fell English', serif" }}
+            >
+              Cancelled
+            </span>
+          )}
           <span className="ink-faded hover:ink-text">
             {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </span>

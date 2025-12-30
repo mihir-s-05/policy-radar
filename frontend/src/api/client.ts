@@ -159,6 +159,21 @@ export async function validateModel(
   return response.json();
 }
 
+export async function stopChat(request_id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/chat/stop`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ request_id }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Stop request failed: ${response.statusText}`);
+  }
+}
+
 export type SSEEvent =
   | { type: "step"; data: StepEvent }
   | { type: "reasoning_summary"; data: ReasoningSummaryEvent }
@@ -167,7 +182,8 @@ export type SSEEvent =
   | { type: "error"; data: ErrorEvent };
 
 export async function* chatStream(
-  request: ChatRequest
+  request: ChatRequest,
+  signal?: AbortSignal
 ): AsyncGenerator<SSEEvent, void, unknown> {
   const response = await fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
@@ -177,6 +193,7 @@ export async function* chatStream(
     },
     cache: "no-store",
     body: JSON.stringify(request),
+    signal,
   });
 
   if (!response.ok) {
@@ -191,6 +208,18 @@ export async function* chatStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  const abortReader = () => {
+    try {
+      reader.cancel();
+    } catch {
+    }
+  };
+
+  if (signal?.aborted) {
+    abortReader();
+    return;
+  }
+  signal?.addEventListener("abort", abortReader, { once: true });
 
   try {
     while (true) {
@@ -224,6 +253,7 @@ export async function* chatStream(
       }
     }
   } finally {
+    signal?.removeEventListener("abort", abortReader);
     reader.releaseLock();
   }
 }

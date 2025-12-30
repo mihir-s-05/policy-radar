@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
@@ -18,6 +19,9 @@ from ..models.schemas import (
     ProviderInfo,
     ValidateModelRequest,
     ValidateModelResponse,
+    EmbeddingProviderInfo,
+    StopChatRequest,
+    StopChatResponse,
 )
 from ..models.database import (
     create_session,
@@ -33,6 +37,7 @@ from ..models.database import (
 )
 from ..services.openai_service import OpenAIService
 from ..services.pdf_memory import get_pdf_memory_store
+from ..services.chat_cancellation import get_chat_cancellation_manager
 from ..clients.base import RateLimitError, APIError
 from ..clients.web_fetcher import WebFetcher
 from ..config import get_settings
@@ -82,11 +87,36 @@ async def get_config():
             api_mode="chat_completions",
         ),
     }
+    embedding_providers = {
+        "local": EmbeddingProviderInfo(
+            name="local",
+            display_name="Local",
+            models=settings.local_embedding_models,
+            api_key_detected=True,
+        ),
+        "openai": EmbeddingProviderInfo(
+            name="openai",
+            display_name="OpenAI",
+            base_url=settings.openai_base_url,
+            models=settings.openai_embedding_models,
+            api_key_detected=bool(settings.openai_api_key),
+        ),
+        "huggingface": EmbeddingProviderInfo(
+            name="huggingface",
+            display_name="Hugging Face",
+            base_url=settings.huggingface_base_url,
+            models=settings.huggingface_embedding_models,
+            api_key_detected=bool(settings.huggingface_api_key),
+        ),
+    }
     return ConfigResponse(
         model=settings.openai_model,
         available_models=settings.available_models,
         default_api_mode=settings.default_api_mode,
         providers=providers,
+        embedding_provider=settings.embedding_provider,
+        embedding_model=settings.embedding_model,
+        embedding_providers=embedding_providers,
     )
 
 
@@ -326,6 +356,11 @@ async def chat(request: ChatRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    cancel_manager = get_chat_cancellation_manager()
+    cancel_event = None
+    if request.request_id:
+        cancel_event = await cancel_manager.register(request.request_id)
+
     try:
         add_message(request.session_id, "user", request.message)
 
@@ -358,6 +393,7 @@ async def chat(request: ChatRequest):
             session_id=request.session_id,
             base_url=base_url,
             api_key=api_key,
+            embedding_config=request.embedding_config,
         )
 
         if api_mode == "chat_completions":
@@ -368,6 +404,7 @@ async def chat(request: ChatRequest):
                     days=request.days,
                     model=model_override,
                     sources=request.sources,
+                    cancel_event=cancel_event,
                 )
             )
         else:
@@ -379,6 +416,7 @@ async def chat(request: ChatRequest):
                     model=model_override,
                     sources=request.sources,
                     previous_response_id=session.get("previous_response_id"),
+                    cancel_event=cancel_event,
                 )
             )
 
@@ -397,6 +435,8 @@ async def chat(request: ChatRequest):
             model=model_used,
         )
 
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=499, detail="Request cancelled")
     except RateLimitError as e:
         logger.warning(f"Rate limit error: {e}")
         raise HTTPException(
@@ -414,6 +454,9 @@ async def chat(request: ChatRequest):
     except Exception as e:
         logger.exception("Error processing chat request")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if request.request_id:
+            await cancel_manager.clear(request.request_id)
 
 
 @router.post("/chat/stream")
@@ -423,6 +466,10 @@ async def chat_stream(request: ChatRequest):
         raise HTTPException(status_code=404, detail="Session not found")
 
     async def event_generator():
+        cancel_manager = get_chat_cancellation_manager()
+        cancel_event = None
+        if request.request_id:
+            cancel_event = await cancel_manager.register(request.request_id)
         try:
             add_message(request.session_id, "user", request.message)
 
@@ -455,6 +502,7 @@ async def chat_stream(request: ChatRequest):
                 session_id=request.session_id,
                 base_url=base_url,
                 api_key=api_key,
+                embedding_config=request.embedding_config,
             )
 
             final_answer = ""
@@ -467,6 +515,7 @@ async def chat_stream(request: ChatRequest):
                     days=request.days,
                     model=model_override,
                     sources=request.sources,
+                    cancel_event=cancel_event,
                 )
             else:
                 stream_method = openai_service.chat_stream(
@@ -476,6 +525,7 @@ async def chat_stream(request: ChatRequest):
                     model=model_override,
                     sources=request.sources,
                     previous_response_id=session.get("previous_response_id"),
+                    cancel_event=cancel_event,
                 )
 
             async for event in stream_method:
@@ -503,6 +553,8 @@ async def chat_stream(request: ChatRequest):
                     "data": json.dumps(event_data),
                 }
 
+        except asyncio.CancelledError:
+            logger.info("Chat stream cancelled for request %s", request.request_id)
         except RateLimitError as e:
             yield {
                 "event": "error",
@@ -539,8 +591,18 @@ async def chat_stream(request: ChatRequest):
                     "message": str(e),
                 }),
             }
+        finally:
+            if request.request_id:
+                await cancel_manager.clear(request.request_id)
 
     return EventSourceResponse(event_generator())
+
+
+@router.post("/chat/stop", response_model=StopChatResponse)
+async def stop_chat(request: StopChatRequest):
+    cancel_manager = get_chat_cancellation_manager()
+    stopped = await cancel_manager.cancel(request.request_id)
+    return StopChatResponse(request_id=request.request_id, stopped=stopped)
 
 
 @router.get("/health")

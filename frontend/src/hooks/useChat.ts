@@ -1,6 +1,6 @@
-import { useState, useCallback } from "react";
-import { chatStream, chat } from "../api/client";
-import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider } from "../types";
+import { useState, useCallback, useRef } from "react";
+import { chatStream, chat, stopChat } from "../api/client";
+import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider, EmbeddingConfig } from "../types";
 
 interface UseChatOptions {
   sessionId: string | null;
@@ -13,6 +13,57 @@ export function useChat({ sessionId }: UseChatOptions) {
   const [currentSteps, setCurrentSteps] = useState<Step[]>([]);
   const [currentSources, setCurrentSources] = useState<SourceItem[]>([]);
   const [reasoningSummary, setReasoningSummary] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
+  const activeAssistantIdRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
+  const cancelledMessage = "*Request cancelled by user.*";
+
+  const markCancelledSteps = (steps: Step[]) =>
+    steps.map((step) => {
+      if (step.status !== "running") return step;
+      const label = step.label ? `${step.label} (cancelled)` : "Cancelled";
+      return {
+        ...step,
+        status: "error",
+        label,
+        result_preview: {
+          ...(step.result_preview || {}),
+          cancelled: true,
+        },
+      };
+    });
+
+  const handleStop = useCallback(async () => {
+    if (!activeRequestIdRef.current) return;
+    stopRequestedRef.current = true;
+    abortRef.current?.abort();
+    const requestId = activeRequestIdRef.current;
+    try {
+      await stopChat(requestId);
+    } catch (err) {
+      console.warn("Failed to stop chat:", err);
+    } finally {
+      activeRequestIdRef.current = null;
+    }
+
+    if (activeAssistantIdRef.current) {
+      const assistantId = activeAssistantIdRef.current;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? {
+              ...m,
+              content: m.content.trim() ? m.content : cancelledMessage,
+              isStreaming: false,
+            }
+            : m
+        )
+      );
+    }
+    setCurrentSteps((prev) => markCancelledSteps(prev));
+    setIsLoading(false);
+  }, []);
 
   const sendMessage = useCallback(
     async (
@@ -24,7 +75,8 @@ export function useChat({ sessionId }: UseChatOptions) {
       apiMode?: ApiMode,
       customModel?: CustomModelConfig,
       apiKey?: string,
-      provider?: ModelProvider
+      provider?: ModelProvider,
+      embeddingConfig?: EmbeddingConfig
     ) => {
       const effectiveSessionId = overrideSessionId || sessionId;
       if (!effectiveSessionId || !content.trim()) return;
@@ -34,6 +86,7 @@ export function useChat({ sessionId }: UseChatOptions) {
       setCurrentSteps([]);
       setCurrentSources([]);
       setReasoningSummary(null);
+      stopRequestedRef.current = false;
 
       const userMessage: Message = {
         id: `user-${Date.now()}`,
@@ -43,6 +96,7 @@ export function useChat({ sessionId }: UseChatOptions) {
       setMessages((prev) => [...prev, userMessage]);
 
       const assistantId = `assistant-${Date.now()}`;
+      activeAssistantIdRef.current = assistantId;
       const assistantMessage: Message = {
         id: assistantId,
         role: "assistant",
@@ -54,6 +108,13 @@ export function useChat({ sessionId }: UseChatOptions) {
       setMessages((prev) => [...prev, assistantMessage]);
 
       try {
+        const requestId =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `req-${Date.now()}`;
+        activeRequestIdRef.current = requestId;
+        abortRef.current = new AbortController();
+
         let finalContent = "";
         let finalSources: SourceItem[] = [];
         let finalSteps: Step[] = [];
@@ -70,7 +131,12 @@ export function useChat({ sessionId }: UseChatOptions) {
           api_mode: apiMode,
           custom_model: customModel,
           api_key: apiKey,
-        })) {
+          request_id: requestId,
+          embedding_config: embeddingConfig,
+        }, abortRef.current.signal)) {
+          if (stopRequestedRef.current) {
+            break;
+          }
           switch (event.type) {
             case "step": {
               const stepData = event.data;
@@ -130,6 +196,31 @@ export function useChat({ sessionId }: UseChatOptions) {
           }
         }
 
+        if (stopRequestedRef.current) {
+          stopRequestedRef.current = false;
+          setCurrentSteps((current) => {
+            const updated = markCancelledSteps(current);
+            finalSteps = updated;
+            return updated;
+          });
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                  ...m,
+                  content: finalContent.trim() ? finalContent : cancelledMessage,
+                  sources: finalSources,
+                  steps: finalSteps,
+                  reasoning_summary: finalReasoning || undefined,
+                  isStreaming: false,
+                  model: finalModel,
+                }
+                : m
+            )
+          );
+          return;
+        }
+
         setCurrentSteps((current) => {
           finalSteps = current;
           return current;
@@ -151,6 +242,26 @@ export function useChat({ sessionId }: UseChatOptions) {
           )
         );
       } catch (e) {
+        const isAbort =
+          e instanceof DOMException && e.name === "AbortError";
+
+        if (isAbort || stopRequestedRef.current) {
+          stopRequestedRef.current = false;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                  ...m,
+                  content: m.content.trim() ? m.content : cancelledMessage,
+                  isStreaming: false,
+                }
+                : m
+            )
+          );
+          setCurrentSteps((prev) => markCancelledSteps(prev));
+          return;
+        }
+
         console.error("Streaming failed, trying non-streaming:", e);
 
         try {
@@ -164,6 +275,8 @@ export function useChat({ sessionId }: UseChatOptions) {
             api_mode: apiMode,
             custom_model: customModel,
             api_key: apiKey,
+            request_id: activeRequestIdRef.current || undefined,
+            embedding_config: embeddingConfig,
           });
 
           setMessages((prev) =>
@@ -194,6 +307,9 @@ export function useChat({ sessionId }: UseChatOptions) {
         }
       } finally {
         setIsLoading(false);
+        activeRequestIdRef.current = null;
+        activeAssistantIdRef.current = null;
+        abortRef.current = null;
       }
     },
     [sessionId]
@@ -231,6 +347,7 @@ export function useChat({ sessionId }: UseChatOptions) {
     currentSources,
     reasoningSummary,
     sendMessage,
+    stopChat: handleStop,
     clearMessages,
     loadMessages,
     updateMessageContent,

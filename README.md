@@ -37,14 +37,6 @@ A research chatbot for tracking U.S. federal policy activity across multiple off
 | `RAG_CHUNK_OVERLAP` | No | `200` | PDF chunk overlap (chars) |
 | `RAG_MAX_CHUNKS` | No | `500` | Max chunks per PDF |
 | `RAG_TOP_K` | No | `5` | Retrieval count |
-| `SEARCHGOV_AFFILIATE` | No | - | Search.gov affiliate id |
-| `SEARCHGOV_ACCESS_KEY` | No | - | Search.gov access key |
-| `VITE_API_BASE` | No | `http://localhost:8000` | Frontend API base URL |
-
-\* Required only when using OpenAI as the provider.
-
-### Providers and Settings
-
 The UI settings panel lets you:
 
 - Select a model provider (OpenAI, Anthropic, Gemini, or Custom Endpoint).

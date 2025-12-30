@@ -94,6 +94,7 @@ interface MessageListProps {
     dbId: number,
     content: string
   ) => Promise<void> | void;
+  onSuggestion?: (suggestion: string) => void;
 }
 
 export function MessageList({
@@ -101,12 +102,38 @@ export function MessageList({
   isLoading,
   isBusy,
   onEditMessage,
+  onSuggestion,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  const suggestionPool = [
+    "Summarize recent EPA rulemakings on emissions.",
+    "Find Federal Register notices about AI safety from last week.",
+    "What are the latest DHS updates on border security?",
+    "Show recent FDA guidance on medical device cybersecurity.",
+    "List new DOE energy efficiency standards proposed this month.",
+    "Find DOJ press releases about antitrust enforcement this quarter.",
+    "Summarize Treasury Fiscal Data on interest outlays this year.",
+    "Which bills mention data privacy in the current Congress?",
+    "Search USAspending awards related to cybersecurity grants.",
+    "Find data.gov datasets about climate risk disclosures.",
+    "Locate rulemakings on PFAS regulation activity.",
+    "Summarize recent Federal Register notices on transportation safety.",
+  ];
+
+  const pickSuggestions = (count: number) => {
+    const pool = [...suggestionPool];
+    for (let i = pool.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, Math.min(count, pool.length));
+  };
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -119,6 +146,14 @@ export function MessageList({
       setEditError(null);
     }
   }, [messages, editingId]);
+
+  useEffect(() => {
+    if (messages.length === 0) {
+      setSuggestions(pickSuggestions(3));
+    } else if (suggestions.length > 0) {
+      setSuggestions([]);
+    }
+  }, [messages.length, suggestions.length]);
 
   if (messages.length === 0) {
     if (isLoading) {
@@ -168,20 +203,26 @@ export function MessageList({
               Suggested Inquiries:
             </p>
             <ul className="flex flex-col gap-2">
-              {[
-                "Summarize recent EPA rulemakings on emissions.",
-                "Find Federal Register notices about AI safety from last week.",
-                "What are the latest DHS updates on border security?",
-              ].map((suggestion, i) => (
+              {suggestions.map((suggestion, i) => (
                 <li
                   key={i}
-                  className="cursor-pointer rounded-md px-3 py-2 text-sm transition-colors hover:bg-parchment-300/50 ink-text"
-                  style={{
-                    fontFamily: "'IM Fell English', serif",
-                    borderLeft: "2px solid hsl(30, 40%, 55%)",
-                  }}
+                  className="rounded-md"
                 >
-                  "{suggestion}"
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => onSuggestion?.(suggestion)}
+                    className={cn(
+                      "w-full cursor-pointer rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-parchment-300/50 ink-text",
+                      isBusy && "cursor-not-allowed opacity-60"
+                    )}
+                    style={{
+                      fontFamily: "'IM Fell English', serif",
+                      borderLeft: "2px solid hsl(30, 40%, 55%)",
+                    }}
+                  >
+                    "{suggestion}"
+                  </button>
                 </li>
               ))}
             </ul>

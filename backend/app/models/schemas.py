@@ -47,6 +47,13 @@ class CustomModelConfig(BaseModel):
     api_key: Optional[str] = None
 
 
+class EmbeddingConfig(BaseModel):
+    provider: Literal["local", "openai", "huggingface"] = "local"
+    model: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
 class Step(BaseModel):
     step_id: str
     status: Literal["running", "done", "error"]
@@ -67,6 +74,8 @@ class ChatRequest(BaseModel):
     api_mode: Optional[Literal["responses", "chat_completions"]] = None
     custom_model: Optional[CustomModelConfig] = None
     api_key: Optional[str] = None
+    request_id: Optional[str] = None
+    embedding_config: Optional[EmbeddingConfig] = None
 
 
 class ChatResponse(BaseModel):
@@ -141,11 +150,22 @@ class ProviderInfo(BaseModel):
     api_mode: Literal["responses", "chat_completions"] = "chat_completions"
 
 
+class EmbeddingProviderInfo(BaseModel):
+    name: str
+    display_name: str
+    base_url: Optional[str] = None
+    models: list[str] = Field(default_factory=list)
+    api_key_detected: bool = False
+
+
 class ConfigResponse(BaseModel):
     model: str
     available_models: list[str] = Field(default_factory=list)
     default_api_mode: Literal["responses", "chat_completions"] = "responses"
     providers: dict[str, ProviderInfo] = Field(default_factory=dict)
+    embedding_provider: str
+    embedding_model: str
+    embedding_providers: dict[str, EmbeddingProviderInfo] = Field(default_factory=dict)
 
 
 class ValidateModelRequest(BaseModel):
@@ -158,6 +178,15 @@ class ValidateModelRequest(BaseModel):
 class ValidateModelResponse(BaseModel):
     valid: bool
     message: str
+
+
+class StopChatRequest(BaseModel):
+    request_id: str
+
+
+class StopChatResponse(BaseModel):
+    request_id: str
+    stopped: bool
 
 
 class StepEvent(BaseModel):

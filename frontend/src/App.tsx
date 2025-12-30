@@ -2,10 +2,10 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { useSession } from "./hooks/useSession";
 import { useChat } from "./hooks/useChat";
 import { getSessionMessages, updateMessage, getConfig } from "./api/client";
-import { ChatInput, ChatSidebar, MessageList, WorkLog, SourceCards, loadSourcesFromStorage, SettingsModal, loadSettings } from "./components";
+import { ChatInput, ChatSidebar, MessageList, WorkLog, SourceCards, loadSourcesFromStorage, SettingsModal, loadSettings, saveSettings, EmbeddingModelModal } from "./components";
 import type { UserSettings } from "./components";
 import { FoxingOverlay } from "./components/FoxingOverlay";
-import type { Message, SourceSelection, SourceItem, ProviderInfo } from "./types";
+import type { Message, SourceSelection, SourceItem, ProviderInfo, EmbeddingProviderInfo, EmbeddingProvider } from "./types";
 import { PanelLeft, PanelRightClose } from "lucide-react";
 import { Button } from "./components/ui/Button";
 
@@ -28,6 +28,7 @@ function App() {
     currentSources,
     reasoningSummary,
     sendMessage,
+    stopChat,
     clearMessages,
     loadMessages,
     updateMessageContent,
@@ -43,6 +44,7 @@ function App() {
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const isNewSessionRef = useRef(false);
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
+  const [embeddingProviders, setEmbeddingProviders] = useState<Record<string, EmbeddingProviderInfo>>({});
   const [userSettings, setUserSettings] = useState<UserSettings>(() => loadSettings());
 
   useEffect(() => {
@@ -53,9 +55,17 @@ function App() {
         setUserSettings((prev) => ({
           ...prev,
           model: prev.model || config.model,
+          embedding: {
+            ...prev.embedding,
+            provider: prev.embedding?.provider || (config.embedding_provider as EmbeddingProvider),
+            model: prev.embedding?.model || config.embedding_model,
+          },
         }));
         if (config.providers) {
           setProviders(config.providers);
+        }
+        if (config.embedding_providers) {
+          setEmbeddingProviders(config.embedding_providers);
         }
       })
       .catch((err) => console.error("Failed to load config:", err));
@@ -76,6 +86,18 @@ function App() {
     return providerInfo?.models || availableModels;
   }, [providers, availableModels, userSettings.provider, userSettings.customModels, userSettings.providerModels]);
 
+  const combinedEmbeddingModels = useMemo(() => {
+    const provider = userSettings.embedding?.provider || "local";
+    const providerModels = userSettings.embedding?.providerModels
+      ? userSettings.embedding.providerModels[provider as keyof typeof userSettings.embedding.providerModels]
+      : undefined;
+    if (providerModels && providerModels.length > 0) {
+      return providerModels;
+    }
+    const providerInfo = embeddingProviders[provider];
+    return providerInfo?.models || [];
+  }, [embeddingProviders, userSettings.embedding]);
+
   const aggregateSources = (historyMessages: Message[]): SourceItem[] => {
     const seen = new Set<string>();
     const aggregated: SourceItem[] = [];
@@ -91,6 +113,34 @@ function App() {
     }
 
     return aggregated;
+  };
+
+  const getChatConfig = (nextModel: string) => {
+    const provider = userSettings.provider || "openai";
+    const customModel = provider === "custom"
+      ? userSettings.customModels.find(m => m.model_name === nextModel)
+      : undefined;
+    const apiMode = provider === "openai" ? userSettings.apiMode : "chat_completions";
+    const apiKey = userSettings.apiKeys?.[provider as keyof typeof userSettings.apiKeys] || undefined;
+
+    const embeddingProvider = userSettings.embedding?.provider || "local";
+    const embeddingApiKey =
+      userSettings.embedding?.apiKeys?.[embeddingProvider as keyof typeof userSettings.embedding.apiKeys];
+    const embeddingBaseUrl =
+      userSettings.embedding?.baseUrls?.[embeddingProvider as keyof typeof userSettings.embedding.baseUrls];
+
+    return {
+      provider,
+      customModel,
+      apiMode,
+      apiKey,
+      embedding: {
+        provider: embeddingProvider,
+        model: userSettings.embedding?.model || "",
+        api_key: embeddingApiKey,
+        base_url: embeddingBaseUrl,
+      },
+    };
   };
 
   const handleNewChat = () => {
@@ -150,12 +200,7 @@ function App() {
       }
     }
 
-    const provider = userSettings.provider || "openai";
-    const customModel = provider === "custom"
-      ? userSettings.customModels.find(m => m.model_name === nextModel)
-      : undefined;
-    const apiMode = provider === "openai" ? userSettings.apiMode : "chat_completions";
-    const apiKey = userSettings.apiKeys?.[provider as keyof typeof userSettings.apiKeys] || undefined;
+    const chatConfig = getChatConfig(nextModel);
 
     await sendMessage(
       message,
@@ -163,13 +208,39 @@ function App() {
       nextDays,
       nextModel,
       currentSessionId,
-      apiMode,
-      customModel,
-      apiKey,
-      provider
+      chatConfig.apiMode,
+      chatConfig.customModel,
+      chatConfig.apiKey,
+      chatConfig.provider,
+      chatConfig.embedding
     );
     isNewSessionRef.current = false;
     await refreshSessions().catch(() => undefined);
+  };
+
+  const handleSuggestedInquiry = async (suggestion: string) => {
+    if (isChatBusy) return;
+    clearMessages();
+    try {
+      isNewSessionRef.current = true;
+      const newSessionId = await createNewSession();
+      const chatConfig = getChatConfig(model);
+      await sendMessage(
+        suggestion,
+        sources,
+        days,
+        model,
+        newSessionId,
+        chatConfig.apiMode,
+        chatConfig.customModel,
+        chatConfig.apiKey,
+        chatConfig.provider,
+        chatConfig.embedding
+      );
+      await refreshSessions().catch(() => undefined);
+    } finally {
+      isNewSessionRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -182,10 +253,30 @@ function App() {
   }, [combinedAvailableModels, model]);
 
   useEffect(() => {
+    if (!combinedEmbeddingModels.length) return;
+    const currentEmbedding = userSettings.embedding?.model;
+    if (currentEmbedding && combinedEmbeddingModels.includes(currentEmbedding)) {
+      return;
+    }
+    const nextEmbedding = combinedEmbeddingModels[0];
+    setUserSettings((prev) => ({
+      ...prev,
+      embedding: {
+        ...prev.embedding,
+        model: nextEmbedding,
+      },
+    }));
+  }, [combinedEmbeddingModels, userSettings.embedding?.model]);
+
+  useEffect(() => {
     if (userSettings.model && userSettings.model !== model) {
       setModel(userSettings.model);
     }
   }, [userSettings.model, model]);
+
+  useEffect(() => {
+    saveSettings(userSettings);
+  }, [userSettings]);
 
   useEffect(() => {
     if (!sessionId || isNewSessionRef.current) return;
@@ -279,6 +370,7 @@ function App() {
             isLoading={historyLoading}
             onEditMessage={handleEditMessage}
             isBusy={isChatBusy}
+            onSuggestion={handleSuggestedInquiry}
           />
           {historyError && (
             <div className="mx-4 mb-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -292,7 +384,9 @@ function App() {
           )}
           <ChatInput
             onSend={handleSendMessage}
-            isLoading={isChatBusy}
+            isLoading={isLoading}
+            isBusy={isChatBusy}
+            onStop={stopChat}
             sources={sources}
             days={days}
             model={model}
@@ -303,11 +397,29 @@ function App() {
               setModel(nextModel);
               setUserSettings((prev) => ({ ...prev, model: nextModel }));
             }}
+            embeddingModal={
+              <EmbeddingModelModal
+                disabled={isChatBusy}
+                provider={userSettings.embedding?.provider || "local"}
+                model={userSettings.embedding?.model || ""}
+                availableModels={combinedEmbeddingModels}
+                onModelChange={(nextModel) => {
+                  setUserSettings((prev) => ({
+                    ...prev,
+                    embedding: {
+                      ...prev.embedding,
+                      model: nextModel,
+                    },
+                  }));
+                }}
+              />
+            }
             settingsModal={
               <SettingsModal
                 settings={userSettings}
                 onSettingsChange={setUserSettings}
                 providers={providers}
+                embeddingProviders={embeddingProviders}
                 defaultApiMode="responses"
               />
             }

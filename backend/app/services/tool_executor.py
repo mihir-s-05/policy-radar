@@ -13,14 +13,18 @@ from ..clients.fiscal_data import FiscalDataClient
 from ..clients.datagov import DataGovClient
 from ..clients.doj import DOJClient
 from ..clients.searchgov import SearchGovClient
-from ..models.schemas import SourceItem, Step
+from ..models.schemas import SourceItem, Step, EmbeddingConfig
 from .pdf_memory import get_pdf_memory_store
 
 logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
-    def __init__(self, session_id: Optional[str] = None):
+    def __init__(
+        self,
+        session_id: Optional[str] = None,
+        embedding_config: Optional[EmbeddingConfig] = None,
+    ):
         self.regulations_client = RegulationsClient()
         self.govinfo_client = GovInfoClient()
         self.web_fetcher = WebFetcher()
@@ -33,11 +37,15 @@ class ToolExecutor:
         self.searchgov_client = SearchGovClient()
         self._all_sources: list[SourceItem] = []
         self.session_id = session_id
+        self.embedding_config = embedding_config
         self.pdf_memory = get_pdf_memory_store()
         self._max_tool_text_length = 20000
 
     def set_session(self, session_id: Optional[str]) -> None:
         self.session_id = session_id
+
+    def set_embedding_config(self, embedding_config: Optional[EmbeddingConfig]) -> None:
+        self.embedding_config = embedding_config
 
     def _extract_regulations_document_id(self, url: str) -> Optional[str]:
         if not url:
@@ -71,6 +79,8 @@ class ToolExecutor:
     ) -> None:
         if not self.session_id or not text:
             return
+        if not getattr(self.pdf_memory, "enabled", True):
+            return
         text_to_index = text
         if pdf_url and content_format != "pdf":
             logger.info("Fetching PDF text for RAG indexing: %s", pdf_url)
@@ -98,6 +108,7 @@ class ToolExecutor:
                 doc_key=doc_key,
                 text=text_to_index,
                 metadata=metadata,
+                embedding_config=self.embedding_config,
             )
         except Exception as exc:
             logger.warning(
@@ -554,6 +565,8 @@ class ToolExecutor:
 
         if not self.session_id:
             return {"error": "PDF memory not available without a session."}, {"error": "Missing session"}
+        if not getattr(self.pdf_memory, "enabled", True):
+            return {"error": "PDF memory is currently unavailable."}, {"error": "PDF memory unavailable"}
         if not query:
             return {"error": "Missing query."}, {"error": "Missing query"}
 
@@ -561,6 +574,7 @@ class ToolExecutor:
             session_id=self.session_id,
             query_text=query,
             top_k=top_k,
+            embedding_config=self.embedding_config,
         )
         logger.info(
             "PDF memory search for session %s: '%s' (%s matches)",

@@ -59,16 +59,27 @@ export interface ChatRequest {
   api_mode?: ApiMode;
   custom_model?: CustomModelConfig;
   api_key?: string;
+  request_id?: string;
+  embedding_config?: EmbeddingConfig;
 }
 
 export type ModelProvider = "openai" | "anthropic" | "gemini" | "custom";
 
 export type ApiMode = "responses" | "chat_completions";
 
+export type EmbeddingProvider = "local" | "openai" | "huggingface";
+
 export interface CustomModelConfig {
   base_url: string;
   model_name: string;
   api_key?: string;
+}
+
+export interface EmbeddingConfig {
+  provider: EmbeddingProvider;
+  model: string;
+  api_key?: string;
+  base_url?: string;
 }
 
 export interface ChatResponse {
@@ -138,11 +149,22 @@ export interface ProviderInfo {
   api_mode: ApiMode;
 }
 
+export interface EmbeddingProviderInfo {
+  name: string;
+  display_name: string;
+  base_url?: string | null;
+  models: string[];
+  api_key_detected: boolean;
+}
+
 export interface ConfigResponse {
   model: string;
   available_models: string[];
   default_api_mode: ApiMode;
   providers: Record<string, ProviderInfo>;
+  embedding_provider: string;
+  embedding_model: string;
+  embedding_providers: Record<string, EmbeddingProviderInfo>;
 }
 
 export interface ValidateModelRequest {

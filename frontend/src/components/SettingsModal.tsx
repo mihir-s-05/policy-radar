@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { Settings, Eye, EyeOff, CheckCircle, XCircle, Plus, Trash2, X } from "lucide-react";
-import type { ApiMode, ModelProvider, CustomModelConfig, ProviderInfo } from "../types";
+import type {
+    ApiMode,
+    ModelProvider,
+    CustomModelConfig,
+    ProviderInfo,
+    EmbeddingProvider,
+    EmbeddingProviderInfo,
+} from "../types";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import {
@@ -37,7 +44,33 @@ export interface UserSettings {
         gemini?: string[];
     };
     customModels: CustomModelConfig[];
+    embedding: EmbeddingSettings;
 }
+
+export interface EmbeddingSettings {
+    provider: EmbeddingProvider;
+    model: string;
+    apiKeys: {
+        openai?: string;
+        huggingface?: string;
+    };
+    providerModels: {
+        local?: string[];
+        openai?: string[];
+        huggingface?: string[];
+    };
+    baseUrls: {
+        huggingface?: string;
+    };
+}
+
+const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
+    provider: "local",
+    model: "sentence-transformers/all-MiniLM-L6-v2",
+    apiKeys: {},
+    providerModels: {},
+    baseUrls: {},
+};
 
 const DEFAULT_SETTINGS: UserSettings = {
     provider: "openai",
@@ -46,6 +79,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     apiKeys: {},
     providerModels: {},
     customModels: [],
+    embedding: DEFAULT_EMBEDDING_SETTINGS,
 };
 
 function loadSettings(): UserSettings {
@@ -53,7 +87,14 @@ function loadSettings(): UserSettings {
         const stored = localStorage.getItem(SETTINGS_KEY);
         if (stored) {
             const parsed = JSON.parse(stored);
-            return { ...DEFAULT_SETTINGS, ...parsed };
+            return {
+                ...DEFAULT_SETTINGS,
+                ...parsed,
+                embedding: {
+                    ...DEFAULT_EMBEDDING_SETTINGS,
+                    ...(parsed.embedding || {}),
+                },
+            };
         }
     } catch {
     }
@@ -71,6 +112,7 @@ interface SettingsModalProps {
     settings: UserSettings;
     onSettingsChange: (settings: UserSettings) => void;
     providers?: Record<string, ProviderInfo>;
+    embeddingProviders?: Record<string, EmbeddingProviderInfo>;
     defaultApiMode?: ApiMode;
 }
 
@@ -78,10 +120,13 @@ export function SettingsModal({
     settings,
     onSettingsChange,
     providers = {},
+    embeddingProviders = {},
     defaultApiMode = "responses"
 }: SettingsModalProps) {
     const [open, setOpen] = useState(false);
     const [showApiKey, setShowApiKey] = useState(false);
+    const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
+    const [activeTab, setActiveTab] = useState<"model" | "embedding">("model");
 
     const [newModelName, setNewModelName] = useState("");
     const [validatingModel, setValidatingModel] = useState(false);
@@ -91,6 +136,10 @@ export function SettingsModal({
     const [newEndpointModelName, setNewEndpointModelName] = useState("");
     const [newEndpointApiKey, setNewEndpointApiKey] = useState("");
 
+    const [newEmbeddingModelName, setNewEmbeddingModelName] = useState("");
+    const [embeddingValidatingModel, setEmbeddingValidatingModel] = useState(false);
+    const [embeddingValidationResult, setEmbeddingValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
+
     useEffect(() => {
         if (!settings.apiMode) {
             onSettingsChange({ ...settings, apiMode: defaultApiMode });
@@ -98,6 +147,7 @@ export function SettingsModal({
     }, [settings, defaultApiMode, onSettingsChange]);
 
     const currentProviderInfo = providers[settings.provider];
+    const currentEmbeddingProviderInfo = embeddingProviders[settings.embedding.provider];
 
     const getModelsForProvider = (provider: string): string[] => {
         if (provider === "custom") {
@@ -118,6 +168,23 @@ export function SettingsModal({
     const apiKeyDetected = currentProviderInfo?.api_key_detected || false;
 
     const currentApiKey = settings.apiKeys[settings.provider as keyof typeof settings.apiKeys] || "";
+
+    const getEmbeddingModelsForProvider = (provider: EmbeddingProvider): string[] => {
+        const userModels = settings.embedding.providerModels[provider as keyof typeof settings.embedding.providerModels];
+        if (userModels && userModels.length > 0) {
+            return userModels;
+        }
+        return embeddingProviders[provider]?.models || [];
+    };
+
+    const embeddingAvailableModels = getEmbeddingModelsForProvider(settings.embedding.provider);
+
+    const isUsingCustomEmbeddingList =
+        (settings.embedding.providerModels[settings.embedding.provider as keyof typeof settings.embedding.providerModels]?.length ?? 0) > 0;
+
+    const embeddingApiKeyDetected = currentEmbeddingProviderInfo?.api_key_detected || false;
+    const currentEmbeddingApiKey =
+        settings.embedding.apiKeys[settings.embedding.provider as keyof typeof settings.embedding.apiKeys] || "";
 
     const handleSave = () => {
         saveSettings(settings);
@@ -159,6 +226,163 @@ export function SettingsModal({
                 [settings.provider]: value,
             },
         });
+    };
+
+    const handleEmbeddingProviderChange = (value: EmbeddingProvider) => {
+        const models = getEmbeddingModelsForProvider(value);
+        const defaultModel = models[0] || "";
+
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                provider: value,
+                model: defaultModel,
+            },
+        });
+
+        setEmbeddingValidationResult(null);
+        setNewEmbeddingModelName("");
+    };
+
+    const handleEmbeddingModelChange = (value: string) => {
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                model: value,
+            },
+        });
+    };
+
+    const handleEmbeddingApiKeyChange = (value: string) => {
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                apiKeys: {
+                    ...settings.embedding.apiKeys,
+                    [settings.embedding.provider]: value,
+                },
+            },
+        });
+    };
+
+    const handleEmbeddingBaseUrlChange = (value: string) => {
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                baseUrls: {
+                    ...settings.embedding.baseUrls,
+                    huggingface: value,
+                },
+            },
+        });
+    };
+
+    const handleAddEmbeddingModelToProvider = async () => {
+        if (!newEmbeddingModelName.trim()) return;
+
+        const provider = settings.embedding.provider as keyof typeof settings.embedding.providerModels;
+        const currentModels = settings.embedding.providerModels[provider] ||
+            embeddingProviders[settings.embedding.provider]?.models || [];
+
+        if (currentModels.includes(newEmbeddingModelName.trim())) {
+            setNewEmbeddingModelName("");
+            return;
+        }
+
+        if (settings.embedding.provider === "openai") {
+            setEmbeddingValidatingModel(true);
+            setEmbeddingValidationResult(null);
+            try {
+                const result = await validateModel({
+                    provider: "openai",
+                    model_name: newEmbeddingModelName.trim(),
+                    api_key: settings.embedding.apiKeys.openai,
+                });
+                setEmbeddingValidationResult(result);
+                if (!result.valid) {
+                    return;
+                }
+            } catch (error) {
+                setEmbeddingValidationResult({ valid: false, message: "Validation failed to run." });
+                return;
+            } finally {
+                setEmbeddingValidatingModel(false);
+            }
+        }
+
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                providerModels: {
+                    ...settings.embedding.providerModels,
+                    [provider]: [...currentModels, newEmbeddingModelName.trim()],
+                },
+                model: newEmbeddingModelName.trim(),
+            },
+        });
+        setNewEmbeddingModelName("");
+    };
+
+    const handleRemoveEmbeddingModelFromProvider = (modelToRemove: string) => {
+        const provider = settings.embedding.provider as keyof typeof settings.embedding.providerModels;
+        const currentModels = settings.embedding.providerModels[provider] ||
+            embeddingProviders[settings.embedding.provider]?.models || [];
+
+        const newModels = currentModels.filter(m => m !== modelToRemove);
+
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                providerModels: {
+                    ...settings.embedding.providerModels,
+                    [provider]: newModels.length > 0 ? newModels : undefined,
+                },
+                model: settings.embedding.model === modelToRemove ? (newModels[0] || "") : settings.embedding.model,
+            },
+        });
+    };
+
+    const handleResetEmbeddingProviderModels = () => {
+        const provider = settings.embedding.provider as keyof typeof settings.embedding.providerModels;
+        const defaultModels = embeddingProviders[settings.embedding.provider]?.models || [];
+
+        onSettingsChange({
+            ...settings,
+            embedding: {
+                ...settings.embedding,
+                providerModels: {
+                    ...settings.embedding.providerModels,
+                    [provider]: undefined,
+                },
+                model: defaultModels[0] || "",
+            },
+        });
+    };
+
+    const handleValidateEmbeddingModel = async (modelName: string) => {
+        if (!modelName.trim() || settings.embedding.provider !== "openai") return;
+
+        setEmbeddingValidatingModel(true);
+        setEmbeddingValidationResult(null);
+
+        try {
+            const result = await validateModel({
+                provider: "openai",
+                model_name: modelName,
+                api_key: settings.embedding.apiKeys.openai,
+            });
+            setEmbeddingValidationResult(result);
+        } catch (error) {
+            setEmbeddingValidationResult({ valid: false, message: "Validation failed to run." });
+        } finally {
+            setEmbeddingValidatingModel(false);
+        }
     };
 
     const handleAddModelToProvider = async () => {
@@ -319,8 +543,29 @@ export function SettingsModal({
                     </DialogTitle>
                 </DialogHeader>
 
-                <div className="flex flex-col gap-6">
-                    <section className="flex flex-col gap-2">
+                <div className="flex flex-col gap-4">
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className={`btn-parchment text-xs ${activeTab === "model" ? "border-sepia-brown text-sepia-brown" : "border-sepia-light/50"}`}
+                            onClick={() => setActiveTab("model")}
+                        >
+                            <span style={{ fontFamily: "'IM Fell English SC', serif" }}>Model Provider</span>
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className={`btn-parchment text-xs ${activeTab === "embedding" ? "border-sepia-brown text-sepia-brown" : "border-sepia-light/50"}`}
+                            onClick={() => setActiveTab("embedding")}
+                        >
+                            <span style={{ fontFamily: "'IM Fell English SC', serif" }}>Embeddings</span>
+                        </Button>
+                    </div>
+
+                    {activeTab === "model" && (
+                        <div className="flex flex-col gap-6">
+                            <section className="flex flex-col gap-2">
                         <label
                             className="text-xs font-semibold uppercase tracking-wider ink-faded"
                             style={{ fontFamily: "'IM Fell English SC', serif" }}
@@ -650,6 +895,241 @@ export function SettingsModal({
                                 </Button>
                             </div>
                         </section>
+                    )}
+                        </div>
+                    )}
+
+                    {activeTab === "embedding" && (
+                        <div className="flex flex-col gap-6">
+                            <section className="flex flex-col gap-2">
+                                <label
+                                    className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                    style={{ fontFamily: "'IM Fell English SC', serif" }}
+                                >
+                                    Embedding Provider
+                                </label>
+                                <Select
+                                    value={settings.embedding.provider}
+                                    onValueChange={handleEmbeddingProviderChange}
+                                >
+                                    <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                                        <SelectValue placeholder="Select provider" />
+                                    </SelectTrigger>
+                                    <SelectContent className="parchment-bg border-sepia-light/50">
+                                        <SelectItem value="local" style={{ fontFamily: "'Spectral', serif" }}>
+                                            Local
+                                        </SelectItem>
+                                        <SelectItem value="openai" style={{ fontFamily: "'Spectral', serif" }}>
+                                            OpenAI
+                                        </SelectItem>
+                                        <SelectItem value="huggingface" style={{ fontFamily: "'Spectral', serif" }}>
+                                            Hugging Face
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </section>
+
+                            <section className="flex flex-col gap-2">
+                                <div className="flex items-center justify-between">
+                                    <label
+                                        className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                        style={{ fontFamily: "'IM Fell English SC', serif" }}
+                                    >
+                                        Embedding Model
+                                    </label>
+                                    {isUsingCustomEmbeddingList && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 text-xs ink-faded hover:ink-text"
+                                            onClick={handleResetEmbeddingProviderModels}
+                                        >
+                                            Reset to defaults
+                                        </Button>
+                                    )}
+                                </div>
+
+                                {embeddingAvailableModels.length > 0 ? (
+                                    <Select value={settings.embedding.model} onValueChange={handleEmbeddingModelChange}>
+                                        <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                                            <SelectValue placeholder="Select embedding model" />
+                                        </SelectTrigger>
+                                        <SelectContent className="parchment-bg border-sepia-light/50">
+                                            {embeddingAvailableModels.map((model) => (
+                                                <SelectItem
+                                                    key={model}
+                                                    value={model}
+                                                    style={{ fontFamily: "'Spectral', serif" }}
+                                                >
+                                                    {model}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                ) : (
+                                    <p className="text-sm ink-faded italic">No embedding models available</p>
+                                )}
+
+                                <div className="mt-2 p-3 rounded border border-sepia-light/30 bg-parchment-200/20">
+                                    <p
+                                        className="text-xs ink-faded mb-2"
+                                        style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+                                    >
+                                        Add or remove embedding models:
+                                    </p>
+
+                                    <div className="flex flex-wrap gap-1 mb-2">
+                                        {embeddingAvailableModels.map((model) => (
+                                            <span
+                                                key={model}
+                                                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-parchment-200/50 border border-sepia-light/30"
+                                                style={{ fontFamily: "'Spectral', serif" }}
+                                            >
+                                                {model}
+                                                <button
+                                                    onClick={() => handleRemoveEmbeddingModelFromProvider(model)}
+                                                    className="p-0.5 hover:text-destructive"
+                                                    title="Remove model"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <Input
+                                            type="text"
+                                            value={newEmbeddingModelName}
+                                            onChange={(e) => setNewEmbeddingModelName(e.target.value)}
+                                            placeholder="Enter model name"
+                                            className="flex-1 text-sm bg-parchment-200/50 border-sepia-light/50 ink-text"
+                                            style={{ fontFamily: "'Spectral', serif" }}
+                                            onKeyDown={(e) => e.key === "Enter" && handleAddEmbeddingModelToProvider()}
+                                        />
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="btn-parchment"
+                                            onClick={handleAddEmbeddingModelToProvider}
+                                            disabled={!newEmbeddingModelName.trim() || embeddingValidatingModel}
+                                        >
+                                            <Plus className="h-3.5 w-3.5" />
+                                        </Button>
+                                        {settings.embedding.provider === "openai" && (
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-9 px-2 text-xs ink-faded hover:ink-text"
+                                                onClick={() => handleValidateEmbeddingModel(newEmbeddingModelName)}
+                                                disabled={!newEmbeddingModelName.trim() || embeddingValidatingModel}
+                                                title="Check if model exists"
+                                            >
+                                                {embeddingValidatingModel ? (
+                                                    <span className="animate-spin">⟳</span>
+                                                ) : embeddingValidationResult && newEmbeddingModelName ? (
+                                                    embeddingValidationResult.valid ? <CheckCircle className="h-4 w-4 text-green-600" /> : <XCircle className="h-4 w-4 text-destructive" />
+                                                ) : (
+                                                    "Validate"
+                                                )}
+                                            </Button>
+                                        )}
+                                    </div>
+                                    {embeddingValidationResult && newEmbeddingModelName && (
+                                        <p className={`text-xs mt-1 ${embeddingValidationResult.valid ? "text-green-600" : "text-destructive"}`}>
+                                            {embeddingValidationResult.message}
+                                        </p>
+                                    )}
+                                </div>
+                            </section>
+
+                            {settings.embedding.provider !== "local" && (
+                                <section className="flex flex-col gap-2">
+                                    <label
+                                        className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                        style={{ fontFamily: "'IM Fell English SC', serif" }}
+                                    >
+                                        API Key
+                                    </label>
+
+                                    <div className="flex items-center gap-2">
+                                        {embeddingApiKeyDetected ? (
+                                            <>
+                                                <CheckCircle className="h-4 w-4 text-green-600" />
+                                                <span
+                                                    className="text-sm text-green-700"
+                                                    style={{ fontFamily: "'Spectral', serif" }}
+                                                >
+                                                    API key detected from environment
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <XCircle className="h-4 w-4 text-amber-600" />
+                                                <span
+                                                    className="text-sm text-amber-700"
+                                                    style={{ fontFamily: "'Spectral', serif" }}
+                                                >
+                                                    API key not detected
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    <p
+                                        className="text-xs ink-faded"
+                                        style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+                                    >
+                                        {embeddingApiKeyDetected
+                                            ? "Enter a key below to override the environment key."
+                                            : "Enter your API key to use this provider."}
+                                    </p>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            type={showEmbeddingKey ? "text" : "password"}
+                                            value={currentEmbeddingApiKey}
+                                            onChange={(e) => handleEmbeddingApiKeyChange(e.target.value)}
+                                            placeholder={`${currentEmbeddingProviderInfo?.display_name || settings.embedding.provider} API Key`}
+                                            className="flex-1 bg-parchment-200/50 border-sepia-light/50 ink-text"
+                                            style={{ fontFamily: "'Spectral', serif" }}
+                                        />
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            className="h-9 w-9 btn-parchment"
+                                            onClick={() => setShowEmbeddingKey(!showEmbeddingKey)}
+                                        >
+                                            {showEmbeddingKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                        </Button>
+                                    </div>
+                                </section>
+                            )}
+
+                            {settings.embedding.provider === "huggingface" && (
+                                <section className="flex flex-col gap-2">
+                                    <label
+                                        className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                        style={{ fontFamily: "'IM Fell English SC', serif" }}
+                                    >
+                                        Inference Endpoint
+                                    </label>
+                                    <p
+                                        className="text-xs ink-faded"
+                                        style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+                                    >
+                                        Optional base URL for custom Hugging Face endpoints.
+                                    </p>
+                                    <Input
+                                        type="text"
+                                        value={settings.embedding.baseUrls.huggingface || ""}
+                                        onChange={(e) => handleEmbeddingBaseUrlChange(e.target.value)}
+                                        placeholder={currentEmbeddingProviderInfo?.base_url || "https://api-inference.huggingface.co/pipeline/feature-extraction"}
+                                        className="bg-parchment-200/50 border-sepia-light/50 ink-text text-sm"
+                                        style={{ fontFamily: "'Spectral', serif" }}
+                                    />
+                                </section>
+                            )}
+                        </div>
                     )}
                 </div>
 
