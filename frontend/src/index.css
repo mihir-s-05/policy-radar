@@ -482,3 +482,25 @@
   font-style: italic;
   color: hsl(25, 25%, 35%);
 }
+
+.sidebar-resizable-grid {
+  transition: grid-template-columns 0.3s ease;
+}
+
+.sidebar-resizable-grid.is-resizing {
+  transition: none !important;
+  user-select: none;
+}
+
+.sidebar-resizable-grid.is-resizing > * {
+  transition: none !important;
+}
+
+.sidebar-resizable-grid > aside,
+.sidebar-resizable-grid > div:not(.sidebar-resize-handle) {
+  contain: layout style paint;
+}
+
+.sidebar-resize-handle {
+  z-index: 10;
+}

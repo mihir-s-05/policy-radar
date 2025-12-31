@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, AlertTriangle, Loader2, Scroll } from "lucide-react";
-import { fetchContent } from "../api/client";
+import { ExternalLink, Scroll } from "lucide-react";
 import type { SourceItem } from "../types";
 import { Button } from "./ui/Button";
 import {
@@ -62,13 +61,34 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
+function isPdfSource(source: SourceItem): boolean {
+  if (source.pdf_url) return true;
+  if (source.content_type?.toLowerCase().includes("pdf")) return true;
+  if (source.url?.toLowerCase().endsWith(".pdf")) return true;
+  return false;
+}
+
+function getPdfUrl(source: SourceItem): string {
+  return source.pdf_url || source.url;
+}
+
 function SourceCard({
   source,
-  onView,
+  onViewPdf,
 }: {
   source: SourceItem;
-  onView: () => void;
+  onViewPdf: () => void;
 }) {
+  const isPdf = isPdfSource(source);
+
+  const handlePrimaryAction = () => {
+    if (isPdf) {
+      onViewPdf();
+    } else {
+      window.open(source.url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   return (
     <div className="parchment-bg aged-edge flex flex-col gap-3 rounded-lg border border-sepia-light/40 p-4 shadow-parchment transition-all hover:scale-[1.01] hover:shadow-lg">
       <div className="flex items-center justify-between">
@@ -124,9 +144,11 @@ function SourceCard({
           variant="secondary"
           size="sm"
           className="h-7 w-full text-xs btn-parchment"
-          onClick={onView}
+          onClick={handlePrimaryAction}
         >
-          <span style={{ fontFamily: "'IM Fell English SC', serif" }}>View Document</span>
+          <span style={{ fontFamily: "'IM Fell English SC', serif" }}>
+            {isPdf ? "View Document" : "Open Link"}
+          </span>
         </Button>
         <Button
           variant="ghost"
@@ -149,62 +171,33 @@ function SourceCard({
 }
 
 export function SourceCards({ sources }: SourceCardsProps) {
-  const [contentState, setContentState] = useState<{
+  const [pdfState, setPdfState] = useState<{
     isOpen: boolean;
-    isLoading: boolean;
-    url: string;
-    title?: string | null;
-    text?: string | null;
-    error?: string | null;
+    pdfUrl: string;
+    title: string;
+    sourceUrl: string;
   } | null>(null);
 
-  const handleViewContent = async (source: SourceItem) => {
-    setContentState({
+  const sortedSources = [...sources].sort((a, b) => {
+    const aIsPdf = isPdfSource(a);
+    const bIsPdf = isPdfSource(b);
+    if (aIsPdf && !bIsPdf) return -1;
+    if (!aIsPdf && bIsPdf) return 1;
+    return 0;
+  });
+
+  const handleViewPdf = (source: SourceItem) => {
+    setPdfState({
       isOpen: true,
-      isLoading: true,
-      url: source.url,
+      pdfUrl: getPdfUrl(source),
       title: source.title,
-      text: null,
-      error: null,
+      sourceUrl: source.url,
     });
-
-    try {
-      const response = await fetchContent({
-        url: source.url,
-        full_text: true,
-      });
-
-      setContentState((prev) => {
-        if (!prev || prev.url !== source.url) {
-          return prev;
-        }
-        return {
-          ...prev,
-          isLoading: false,
-          title: response.title || source.title,
-          text: response.full_text,
-          error: response.error,
-        };
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to fetch content";
-      setContentState((prev) => {
-        if (!prev || prev.url !== source.url) {
-          return prev;
-        }
-        return {
-          ...prev,
-          isLoading: false,
-          error: message,
-        };
-      });
-    }
   };
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
-      setContentState(null);
+      setPdfState(null);
     }
   };
 
@@ -242,40 +235,40 @@ export function SourceCards({ sources }: SourceCardsProps) {
       </div>
       <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
         <div className="flex flex-col gap-3">
-          {sources.map((source, index) => (
+          {sortedSources.map((source, index) => (
             <SourceCard
               key={`${source.id}-${index}`}
               source={source}
-              onView={() => handleViewContent(source)}
+              onViewPdf={() => handleViewPdf(source)}
             />
           ))}
         </div>
       </div>
 
       <Dialog
-        open={!!contentState?.isOpen}
+        open={!!pdfState?.isOpen}
         onOpenChange={handleOpenChange}
       >
-        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0 sm:max-w-3xl parchment-bg border-sepia-light/50">
-          <DialogHeader className="border-b border-sepia-light/30 p-6">
+        <DialogContent className="flex h-[90vh] max-w-4xl flex-col overflow-hidden p-0 sm:max-w-5xl parchment-bg border-sepia-light/50">
+          <DialogHeader className="flex-shrink-0 border-b border-sepia-light/30 p-4">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1 pr-8">
                 <DialogTitle
                   className="line-clamp-2 text-lg ink-text"
                   style={{ fontFamily: "'IM Fell English', serif" }}
                 >
-                  {contentState?.title || "Document Content"}
+                  {pdfState?.title || "Document"}
                 </DialogTitle>
-                {contentState?.url && (
+                {pdfState?.sourceUrl && (
                   <DialogDescription className="line-clamp-1 w-full max-w-md break-all">
                     <a
-                      href={contentState.url}
+                      href={pdfState.sourceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:text-sepia-brown hover:underline ink-faded"
                       style={{ fontFamily: "'Spectral', serif", fontSize: "0.75rem" }}
                     >
-                      {contentState.url}
+                      {pdfState.sourceUrl}
                     </a>
                   </DialogDescription>
                 )}
@@ -283,40 +276,13 @@ export function SourceCards({ sources }: SourceCardsProps) {
             </div>
           </DialogHeader>
 
-          <div className="custom-scrollbar flex-1 overflow-y-auto p-6">
-            {contentState?.isLoading ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-4 ink-faded">
-                <Loader2 className="h-8 w-8 animate-spin text-sepia-brown" />
-                <p style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}>
-                  Transcribing document from source...
-                </p>
-              </div>
-            ) : contentState?.error ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-4 text-destructive">
-                <AlertTriangle className="h-8 w-8" />
-                <p
-                  className="text-center"
-                  style={{ fontFamily: "'IM Fell English', serif" }}
-                >
-                  {contentState.error}
-                </p>
-              </div>
-            ) : contentState?.text ? (
-              <div className="prose-manuscript max-w-none">
-                <pre
-                  className="whitespace-pre-wrap text-sm leading-relaxed ink-text"
-                  style={{ fontFamily: "'Spectral', serif" }}
-                >
-                  {contentState.text}
-                </pre>
-              </div>
-            ) : (
-              <div
-                className="flex h-60 items-center justify-center ink-faded"
-                style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
-              >
-                No transcribed text available.
-              </div>
+          <div className="flex-1 overflow-hidden">
+            {pdfState?.pdfUrl && (
+              <iframe
+                src={pdfState.pdfUrl}
+                className="h-full w-full border-0"
+                title={pdfState.title || "PDF Document"}
+              />
             )}
           </div>
         </DialogContent>
