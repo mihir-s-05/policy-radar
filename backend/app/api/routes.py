@@ -1,7 +1,7 @@
 import json
 import logging
 import asyncio
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from sse_starlette.sse import EventSourceResponse
 
 from ..models.schemas import (
@@ -41,16 +41,17 @@ from ..services.chat_cancellation import get_chat_cancellation_manager
 from ..clients.base import RateLimitError, APIError
 from ..clients.web_fetcher import WebFetcher
 from ..config import get_settings
+from ..security import require_api_key, rate_limit
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key), Depends(rate_limit)])
 
 
 @router.post("/session", response_model=SessionResponse)
 async def create_new_session():
     try:
-        session_id = create_session()
+        session_id = await create_session()
         logger.info(f"Created new session: {session_id}")
         return SessionResponse(session_id=session_id)
     except Exception as e:
@@ -258,7 +259,7 @@ async def validate_model(request: ValidateModelRequest):
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_chat_sessions(limit: int = Query(default=50, ge=1, le=200)):
     try:
-        sessions = list_sessions(limit=limit)
+        sessions = await list_sessions(limit=limit)
         return SessionListResponse(sessions=sessions)
     except Exception as e:
         logger.exception("Error listing sessions")
@@ -267,7 +268,7 @@ async def list_chat_sessions(limit: int = Query(default=50, ge=1, le=200)):
 
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
 async def delete_chat_session(session_id: str):
-    session = get_session_by_id(session_id)
+    session = await get_session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -277,7 +278,7 @@ async def delete_chat_session(session_id: str):
             await pdf_memory.delete_session(session_id)
         except Exception as e:
             logger.warning("Failed to clear PDF memory for session %s: %s", session_id, e)
-        delete_session(session_id)
+        await delete_session(session_id)
         return DeleteSessionResponse(session_id=session_id, deleted=True)
     except Exception as e:
         logger.exception("Error deleting session")
@@ -286,13 +287,13 @@ async def delete_chat_session(session_id: str):
 
 @router.get("/sessions/{session_id}/messages", response_model=MessagesResponse)
 async def get_session_messages(session_id: str):
-    session = get_session_by_id(session_id)
+    session = await get_session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        messages = get_messages(session_id)
-        sources_rows = get_sources(session_id)
+        messages = await get_messages(session_id)
+        sources_rows = await get_sources(session_id)
         sources_by_message_id = {
             row["message_id"]: json.loads(row["sources_json"])
             for row in sources_rows
@@ -322,11 +323,11 @@ async def get_session_messages(session_id: str):
     response_model=UpdateMessageResponse,
 )
 async def update_message(session_id: str, message_id: int, request: UpdateMessageRequest):
-    session = get_session_by_id(session_id)
+    session = await get_session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    updated = update_message_content(session_id, message_id, request.content)
+    updated = await update_message_content(session_id, message_id, request.content)
     if not updated:
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -352,7 +353,7 @@ async def fetch_content(request: FetchContentRequest):
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    session = get_session_by_id(request.session_id)
+    session = await get_session_by_id(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -362,7 +363,7 @@ async def chat(request: ChatRequest):
         cancel_event = await cancel_manager.register(request.request_id)
 
     try:
-        add_message(request.session_id, "user", request.message)
+        await add_message(request.session_id, "user", request.message)
 
         settings = get_settings()
 
@@ -420,12 +421,12 @@ async def chat(request: ChatRequest):
                 )
             )
 
-        update_session_response_id(request.session_id, new_response_id)
+        await update_session_response_id(request.session_id, new_response_id)
 
-        assistant_message_id = add_message(request.session_id, "assistant", answer_text)
+        assistant_message_id = await add_message(request.session_id, "assistant", answer_text)
         if sources:
             sources_json = json.dumps([s.model_dump() for s in sources])
-            save_sources(request.session_id, assistant_message_id, sources_json)
+            await save_sources(request.session_id, assistant_message_id, sources_json)
 
         return ChatResponse(
             answer_text=answer_text,
@@ -461,7 +462,7 @@ async def chat(request: ChatRequest):
 
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    session = get_session_by_id(request.session_id)
+    session = await get_session_by_id(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -471,7 +472,7 @@ async def chat_stream(request: ChatRequest):
         if request.request_id:
             cancel_event = await cancel_manager.register(request.request_id)
         try:
-            add_message(request.session_id, "user", request.message)
+            await add_message(request.session_id, "user", request.message)
 
             settings = get_settings()
 
@@ -538,15 +539,15 @@ async def chat_stream(request: ChatRequest):
                     new_response_id = event_data.get("response_id")
 
                     if new_response_id:
-                        update_session_response_id(request.session_id, new_response_id)
-                    assistant_message_id = add_message(
+                        await update_session_response_id(request.session_id, new_response_id)
+                    assistant_message_id = await add_message(
                         request.session_id,
                         "assistant",
                         final_answer,
                     )
                     if final_sources:
                         sources_json = json.dumps(final_sources)
-                        save_sources(request.session_id, assistant_message_id, sources_json)
+                        await save_sources(request.session_id, assistant_message_id, sources_json)
 
                 yield {
                     "event": event_type,

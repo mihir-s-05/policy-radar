@@ -281,7 +281,7 @@ export function MessageList({
           <div
             key={message.id}
             className={cn(
-              "flex w-full max-w-3xl gap-4 md:gap-6 message-bubble items-start",
+              "group flex w-full max-w-3xl gap-4 md:gap-6 message-bubble items-start",
               isUser ? "ml-auto flex-row-reverse" : "mr-auto"
             )}
           >

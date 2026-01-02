@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -13,6 +12,7 @@ except ImportError:
     _HTTP2_AVAILABLE = False
 
 from .base import BaseAPIClient
+from .html_utils import html_to_text
 from .pdf_utils import extract_pdf_images_sync, extract_pdf_text_sync
 from ..config import get_settings
 from ..models.schemas import SourceItem
@@ -20,38 +20,34 @@ from ..models.schemas import SourceItem
 logger = logging.getLogger(__name__)
 
 
-def html_to_text(html: str, max_length: int = 15000) -> str:
-    html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-
-    html = re.sub(r'</(p|div|h[1-6]|li|tr|br)[^>]*>', '\n', html, flags=re.IGNORECASE)
-    html = re.sub(r'<(br|hr)[^>]*/?>', '\n', html, flags=re.IGNORECASE)
-
-    text = re.sub(r'<[^>]+>', '', html)
-
-    text = text.replace('&nbsp;', ' ')
-    text = text.replace('&amp;', '&')
-    text = text.replace('&lt;', '<')
-    text = text.replace('&gt;', '>')
-    text = text.replace('&quot;', '"')
-    text = text.replace('&#39;', "'")
-
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n\s*\n', '\n\n', text)
-    text = text.strip()
-
-    if len(text) > max_length:
-        text = text[:max_length] + "\n\n[Content truncated due to length...]"
-
-    return text
-
-
 class GovInfoClient(BaseAPIClient):
+    _shared_content_clients: dict[float, httpx.AsyncClient] = {}
+
     def __init__(self):
         settings = get_settings()
         super().__init__(base_url=settings.govinfo_base_url)
         self.api_key = settings.gov_api_key
-        self._limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+        self._content_client = self._get_content_client(self.timeout)
+
+    @classmethod
+    def _get_content_client(cls, timeout: float) -> httpx.AsyncClient:
+        client = cls._shared_content_clients.get(timeout)
+        if client:
+            return client
+        client = httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            http2=_HTTP2_AVAILABLE,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+        cls._shared_content_clients[timeout] = client
+        return client
+
+    @classmethod
+    async def close_shared_clients(cls) -> None:
+        for client in cls._shared_content_clients.values():
+            await client.aclose()
+        cls._shared_content_clients = {}
 
     def _parse_retry_after(self, value: Optional[str]) -> Optional[float]:
         if not value:
@@ -259,37 +255,34 @@ class GovInfoClient(BaseAPIClient):
         try:
             text_result = ""
 
-            async with httpx.AsyncClient(
-                timeout=self.timeout,
-                follow_redirects=True,
-                http2=_HTTP2_AVAILABLE,
-                limits=self._limits,
-            ) as client:
-                for fmt in ("htm", "xml", "txt"):
-                    if fmt == "htm":
-                        target_url = url
-                    else:
-                        target_url = f"{self.base_url}/packages/{package_id}/{fmt}"
+            client = self._content_client
+            for fmt in ("htm", "xml", "txt"):
+                if fmt == "htm":
+                    target_url = url
+                else:
+                    target_url = f"{self.base_url}/packages/{package_id}/{fmt}"
 
-                    response = await self._fetch_url_with_retry(
-                        client,
-                        target_url,
-                        params,
-                    )
-                    if not response or response.status_code != 200:
-                        continue
+                response = await self._fetch_url_with_retry(
+                    client,
+                    target_url,
+                    params,
+                )
+                if not response or response.status_code != 200:
+                    continue
 
-                    content_type = response.headers.get("content-type", "")
-                    if not self._is_supported_text_type(content_type, response.content):
-                        continue
+                content_type = response.headers.get("content-type", "")
+                if not self._is_supported_text_type(content_type, response.content):
+                    continue
 
-                    text = html_to_text(response.text, max_length)
-                    if text:
-                        text_result = text
-                        content_format = fmt
-                        break
+                text = html_to_text(response.text, max_length)
+                if text:
+                    text_result = text
+                    content_format = fmt
+                    break
 
-                if text_result:
+            if text_result:
+                should_extract_images = self.settings.pdf_extract_images
+                if should_extract_images:
                     pdf_response = await self._fetch_url_with_retry(
                         client,
                         pdf_url,
@@ -310,19 +303,21 @@ class GovInfoClient(BaseAPIClient):
                             images = extracted_images
                             images_skipped = skipped
 
-                    return text_result, source, images, images_skipped, content_format, pdf_url
+                return text_result, source, images, images_skipped, content_format, pdf_url
 
-                pdf_response = await self._fetch_url_with_retry(
-                    client,
-                    pdf_url,
-                    params,
+            pdf_response = await self._fetch_url_with_retry(
+                client,
+                pdf_url,
+                params,
+            )
+            if pdf_response and pdf_response.status_code == 200:
+                pdf_text = await asyncio.to_thread(
+                    extract_pdf_text_sync,
+                    pdf_response.content,
+                    max_length,
                 )
-                if pdf_response and pdf_response.status_code == 200:
-                    pdf_text = await asyncio.to_thread(
-                        extract_pdf_text_sync,
-                        pdf_response.content,
-                        max_length,
-                    )
+                should_extract_images = self.settings.pdf_extract_images or not pdf_text
+                if should_extract_images:
                     extracted_images, skipped = await asyncio.to_thread(
                         extract_pdf_images_sync,
                         pdf_response.content,
@@ -337,9 +332,9 @@ class GovInfoClient(BaseAPIClient):
                     if extracted_images:
                         images = extracted_images
                         images_skipped = skipped
-                    if pdf_text or images:
-                        content_format = "pdf"
-                        return pdf_text or "", source, images, images_skipped, content_format, pdf_url
+                if pdf_text or images:
+                    content_format = "pdf"
+                    return pdf_text or "", source, images, images_skipped, content_format, pdf_url
 
         except Exception as e:
             logger.warning(f"Could not fetch content for {package_id}: {e}")

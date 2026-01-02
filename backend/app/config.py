@@ -1,6 +1,14 @@
+import json
 import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
+
+
+def _get_bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class Settings(BaseSettings):
@@ -80,6 +88,31 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
     rag_max_chunks: int = int(os.getenv("RAG_MAX_CHUNKS", "500"))
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "5"))
+
+    app_api_key: str = os.getenv("APP_API_KEY", "")
+    rate_limit_per_minute: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+
+    fetch_allowed_domains_raw: str = os.getenv("FETCH_ALLOWED_DOMAINS", ".gov,.mil")
+    allow_local_fetch: bool = _get_bool_env("ALLOW_LOCAL_FETCH", False)
+    fetch_max_response_bytes: int = int(os.getenv("FETCH_MAX_RESPONSE_BYTES", "10000000"))
+    pdf_extract_images: bool = _get_bool_env("PDF_EXTRACT_IMAGES", False)
+
+    @property
+    def fetch_allowed_domains(self) -> list[str]:
+        value = self.fetch_allowed_domains_raw
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except Exception:
+                pass
+            return [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
 
     class Config:
         env_file = ".env"

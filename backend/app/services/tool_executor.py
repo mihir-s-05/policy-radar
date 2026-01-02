@@ -545,9 +545,10 @@ class ToolExecutor:
             text_preview = f"{len(data.get('images', []))} images extracted"
         else:
             text_preview = "No content"
+        text_value = data.get("text") or ""
         preview = {
             "url": url[:50],
-            "text_length": len(data.get("text", "")),
+            "text_length": len(text_value),
             "image_count": len(data.get("images", []) or []),
             "preview": text_preview if not data.get("error") else data.get("error"),
         }

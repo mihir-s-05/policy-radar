@@ -8,6 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api import router
 from .models.database import init_db
 from .config import get_settings
+from .clients.base import BaseAPIClient
+from .clients.web_fetcher import WebFetcher
+from .clients.govinfo import GovInfoClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,13 +25,11 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     if not settings.gov_api_key:
-        logger.error("GOV_API_KEY environment variable is not set!")
-        raise ValueError("GOV_API_KEY environment variable is required")
+        logger.warning("GOV_API_KEY environment variable is not set. Some sources will be unavailable.")
     if not settings.openai_api_key:
-        logger.error("OPENAI_API_KEY environment variable is not set!")
-        raise ValueError("OPENAI_API_KEY environment variable is required")
+        logger.warning("OPENAI_API_KEY environment variable is not set. OpenAI provider will be unavailable.")
 
-    init_db()
+    await init_db()
     logger.info("Database initialized")
 
     logger.info(f"Using OpenAI model: {settings.openai_model}")
@@ -37,6 +38,9 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down Policy Radar Chatbot API...")
+    await BaseAPIClient.close_shared_clients()
+    await WebFetcher.close_shared_clients()
+    await GovInfoClient.close_shared_clients()
 
 
 app = FastAPI(

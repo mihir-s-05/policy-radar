@@ -1,6 +1,8 @@
 import asyncio
+import ipaddress
 import logging
 import re
+import socket
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional
@@ -15,6 +17,7 @@ except ImportError:
     _HTTP2_AVAILABLE = False
 
 from ..config import get_settings
+from .html_utils import html_to_text
 from .pdf_utils import (
     extract_pdf_images_sync,
     extract_pdf_text_sync,
@@ -25,53 +28,34 @@ from .pdf_utils import (
 logger = logging.getLogger(__name__)
 
 
-def html_to_text(html: str, max_length: Optional[int] = 15000) -> str:
-    html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<nav[^>]*>.*?</nav>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<footer[^>]*>.*?</footer>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
-
-    html = re.sub(r'</(p|div|h[1-6]|li|tr|section|article)[^>]*>', '\n', html, flags=re.IGNORECASE)
-    html = re.sub(r'<(br|hr)[^>]*/?>', '\n', html, flags=re.IGNORECASE)
-
-    text = re.sub(r'<[^>]+>', ' ', html)
-
-    entities = {
-        '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>',
-        '&quot;': '"', '&#39;': "'", '&apos;': "'",
-        '&mdash;': '--', '&ndash;': '-', '&hellip;': '...',
-        '&copy;': '(c)', '&reg;': '(R)', '&trade;': '(TM)',
-    }
-    for entity, char in entities.items():
-        text = text.replace(entity, char)
-
-    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-    text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1), 16)), text)
-
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n[ \t]+', '\n', text)
-    text = re.sub(r'[ \t]+\n', '\n', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = text.strip()
-
-    if max_length is not None and max_length > 0 and len(text) > max_length:
-        truncated = text[:max_length]
-        last_period = truncated.rfind('.')
-        if last_period > max_length * 0.8:
-            truncated = truncated[:last_period + 1]
-        text = truncated + "\n\n[Content truncated due to length...]"
-
-    return text
-
-
 class WebFetcher:
+    _shared_clients: dict[float, httpx.AsyncClient] = {}
 
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
         self.settings = get_settings()
-        self._limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+        self._client = self._get_shared_client(timeout)
+
+    @classmethod
+    def _get_shared_client(cls, timeout: float) -> httpx.AsyncClient:
+        client = cls._shared_clients.get(timeout)
+        if client:
+            return client
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout),
+            follow_redirects=True,
+            max_redirects=10,
+            http2=_HTTP2_AVAILABLE,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+        cls._shared_clients[timeout] = client
+        return client
+
+    @classmethod
+    async def close_shared_clients(cls) -> None:
+        for client in cls._shared_clients.values():
+            await client.aclose()
+        cls._shared_clients = {}
 
     def _normalize_url(self, url: str) -> str:
         url = (url or "").strip()
@@ -87,6 +71,70 @@ class WebFetcher:
             raise ValueError("Unsupported URL scheme")
 
         return url
+
+    def _is_host_allowed(self, host: str) -> bool:
+        allowed = self.settings.fetch_allowed_domains
+        if not allowed:
+            return True
+
+        host = host.lower()
+        for entry in allowed:
+            domain = entry.lower().strip()
+            if not domain:
+                continue
+            if domain.startswith("."):
+                if host.endswith(domain):
+                    return True
+            elif host == domain or host.endswith(f".{domain}"):
+                return True
+        return False
+
+    def _is_blocked_ip(self, ip: ipaddress._BaseAddress) -> bool:
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+        )
+
+    async def _validate_host(self, host: str) -> None:
+        if not host:
+            raise ValueError("Missing host")
+
+        if self.settings.allow_local_fetch:
+            return
+
+        if not self._is_host_allowed(host):
+            raise ValueError("URL host is not allowed.")
+
+        try:
+            ip = ipaddress.ip_address(host)
+            if self._is_blocked_ip(ip):
+                raise ValueError("URL resolves to a private or local address.")
+            return
+        except ValueError:
+            pass
+
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+        except Exception:
+            raise ValueError("Unable to resolve host.")
+
+        for info in infos:
+            addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if self._is_blocked_ip(ip):
+                raise ValueError("URL resolves to a private or local address.")
+
+    async def _normalize_and_validate_url(self, url: str) -> str:
+        normalized = self._normalize_url(url)
+        parsed = urlparse(normalized)
+        await self._validate_host(parsed.hostname or "")
+        return normalized
 
     def _parse_retry_after(self, value: Optional[str]) -> Optional[float]:
         if not value:
@@ -158,6 +206,40 @@ class WebFetcher:
             "Accept-Encoding": "gzip, deflate",
         }
 
+    async def _read_response_bytes(
+        self,
+        response: httpx.Response,
+        max_bytes: int,
+    ) -> Optional[bytes]:
+        if max_bytes <= 0:
+            return await response.aread()
+
+        content_length = response.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    return None
+            except ValueError:
+                pass
+
+        collected = bytearray()
+        async for chunk in response.aiter_bytes():
+            collected.extend(chunk)
+            if len(collected) > max_bytes:
+                await response.aclose()
+                return None
+        return bytes(collected)
+
+    async def _fetch_response_bytes(
+        self,
+        url: str,
+        headers: dict,
+        max_bytes: int,
+    ) -> tuple[int, httpx.Headers, Optional[bytes]]:
+        async with self._client.stream("GET", url, headers=headers) as response:
+            content = await self._read_response_bytes(response, max_bytes)
+            return response.status_code, response.headers, content
+
     async def _fetch_best_file_format(
         self,
         file_formats: list[dict],
@@ -181,49 +263,45 @@ class WebFetcher:
         return None
 
     async def _fetch_pdf_images_only(self, url: str) -> tuple[list[dict], int]:
-        if not PDF_IMAGE_AVAILABLE:
+        if not PDF_IMAGE_AVAILABLE or not self.settings.pdf_extract_images:
             return [], 0
 
         try:
-            normalized_url = self._normalize_url(url)
+            normalized_url = await self._normalize_and_validate_url(url)
         except ValueError:
             return [], 0
 
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout),
-            follow_redirects=True,
-            max_redirects=10,
-            http2=_HTTP2_AVAILABLE,
-            limits=self._limits,
-        ) as client:
-            response = await client.get(
+        max_bytes = self.settings.fetch_max_response_bytes
+        status, headers, content = await self._fetch_response_bytes(
+            normalized_url,
+            headers=self._build_headers("bot"),
+            max_bytes=max_bytes,
+        )
+        if status == 403:
+            status, headers, content = await self._fetch_response_bytes(
                 normalized_url,
-                headers=self._build_headers("bot"),
+                headers=self._build_headers("browser"),
+                max_bytes=max_bytes,
             )
-            if response.status_code == 403:
-                response = await client.get(
-                    normalized_url,
-                    headers=self._build_headers("browser"),
-                )
-            if response.status_code != 200:
-                return [], 0
+        if status != 200 or content is None:
+            return [], 0
 
-            content_type = (response.headers.get("content-type") or "").lower()
-            if not self._is_probably_pdf(content_type, normalized_url, response.content):
-                return [], 0
+        content_type = (headers.get("content-type") or "").lower()
+        if not self._is_probably_pdf(content_type, normalized_url, content):
+            return [], 0
 
-            images, skipped = await asyncio.to_thread(
-                extract_pdf_images_sync,
-                response.content,
+        images, skipped = await asyncio.to_thread(
+            extract_pdf_images_sync,
+            content,
+        )
+        if images:
+            logger.info(
+                "PDF images extracted from %s: images=%s skipped=%s",
+                normalized_url,
+                len(images),
+                skipped,
             )
-            if images:
-                logger.info(
-                    "PDF images extracted from %s: images=%s skipped=%s",
-                    normalized_url,
-                    len(images),
-                    skipped,
-                )
-            return images, skipped
+        return images, skipped
 
     async def fetch_url(
         self,
@@ -243,184 +321,191 @@ class WebFetcher:
         }
 
         try:
-            normalized_url = self._normalize_url(url)
+            normalized_url = await self._normalize_and_validate_url(url)
             result["url"] = normalized_url
 
             backoff = self.settings.initial_backoff
             max_attempts = self.settings.max_retries + 1
             last_error: Optional[Exception] = None
+            max_bytes = self.settings.fetch_max_response_bytes
 
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
-                follow_redirects=True,
-                max_redirects=10,
-                http2=_HTTP2_AVAILABLE,
-                limits=self._limits,
-            ) as client:
-                for attempt in range(max_attempts):
-                    should_retry = False
-                    retry_wait: Optional[float] = None
+            for attempt in range(max_attempts):
+                should_retry = False
+                retry_wait: Optional[float] = None
 
-                    for variant in ("bot", "browser"):
-                        try:
-                            response = await client.get(
-                                normalized_url,
-                                headers=self._build_headers(variant),
-                            )
-                        except httpx.TimeoutException as e:
-                            last_error = e
+                for variant in ("bot", "browser"):
+                    try:
+                        status, headers, raw_content = await self._fetch_response_bytes(
+                            normalized_url,
+                            headers=self._build_headers(variant),
+                            max_bytes=max_bytes,
+                        )
+                    except httpx.TimeoutException as e:
+                        last_error = e
+                        should_retry = True
+                        break
+                    except httpx.RequestError as e:
+                        last_error = e
+                        should_retry = True
+                        break
+
+                    if status == 403 and variant == "bot":
+                        continue
+
+                    if raw_content is None:
+                        result["error"] = f"Response too large (limit {max_bytes} bytes)."
+                        return result
+
+                    if status == 429:
+                        retry_after = self._parse_retry_after(
+                            headers.get("Retry-After")
+                        )
+                        if attempt < max_attempts - 1:
                             should_retry = True
-                            break
-                        except httpx.RequestError as e:
-                            last_error = e
-                            should_retry = True
-                            break
-
-                        if response.status_code == 403 and variant == "bot":
-                            continue
-
-                        if response.status_code == 429:
-                            retry_after = self._parse_retry_after(
-                                response.headers.get("Retry-After")
-                            )
-                            if attempt < max_attempts - 1:
-                                should_retry = True
-                                retry_wait = retry_after or backoff
-                            else:
-                                result["error"] = "Rate limited (429). Please try again later."
-                                return result
-                            break
-
-                        if response.status_code == 408 or response.status_code >= 500:
-                            if attempt < max_attempts - 1:
-                                should_retry = True
-                                retry_wait = backoff
-                            else:
-                                result["error"] = f"HTTP {response.status_code}"
-                                return result
-                            break
-
-                        if response.status_code != 200:
-                            result["error"] = f"HTTP {response.status_code}"
+                            retry_wait = retry_after or backoff
+                        else:
+                            result["error"] = "Rate limited (429). Please try again later."
                             return result
+                        break
 
-                        content_type = (response.headers.get("content-type") or "").lower()
-                        raw_content = response.content
+                    if status == 408 or status >= 500:
+                        if attempt < max_attempts - 1:
+                            should_retry = True
+                            retry_wait = backoff
+                        else:
+                            result["error"] = f"HTTP {status}"
+                            return result
+                        break
 
-                        if self._is_probably_pdf(content_type, normalized_url, raw_content):
-                            result["content_type"] = content_type or "application/pdf"
-                            result["content_format"] = "pdf"
-                            result["pdf_url"] = normalized_url
-                            pdf_text = await asyncio.to_thread(
-                                extract_pdf_text_sync,
-                                raw_content,
-                                max_length,
-                            )
+                    if status != 200:
+                        result["error"] = f"HTTP {status}"
+                        return result
+
+                    content_type = (headers.get("content-type") or "").lower()
+
+                    if self._is_probably_pdf(content_type, normalized_url, raw_content):
+                        result["content_type"] = content_type or "application/pdf"
+                        result["content_format"] = "pdf"
+                        result["pdf_url"] = normalized_url
+                        pdf_text = await asyncio.to_thread(
+                            extract_pdf_text_sync,
+                            raw_content,
+                            max_length,
+                        )
+                        images = []
+                        skipped = 0
+                        should_extract_images = self.settings.pdf_extract_images or not pdf_text
+                        if should_extract_images:
                             images, skipped = await asyncio.to_thread(
                                 extract_pdf_images_sync,
                                 raw_content,
                             )
 
-                            logger.info(
-                                "PDF extracted from %s: text=%s images=%s skipped=%s",
-                                normalized_url,
-                                len(pdf_text) if pdf_text else 0,
-                                len(images),
-                                skipped,
+                        logger.info(
+                            "PDF extracted from %s: text=%s images=%s skipped=%s",
+                            normalized_url,
+                            len(pdf_text) if pdf_text else 0,
+                            len(images),
+                            skipped,
+                        )
+
+                        if pdf_text:
+                            result["text"] = pdf_text
+                        if images:
+                            result["images"] = images
+                            result["image_count"] = len(images)
+                            if skipped:
+                                result["images_skipped"] = skipped
+
+                        if result.get("text") or images:
+                            return result
+
+                        if not PDF_TEXT_AVAILABLE and not PDF_IMAGE_AVAILABLE:
+                            result["error"] = (
+                                "PDF handling requires pypdf (text) or pymupdf (images)."
                             )
-
-                            if pdf_text:
-                                result["text"] = pdf_text
-                            if images:
-                                result["images"] = images
-                                result["image_count"] = len(images)
-                                if skipped:
-                                    result["images_skipped"] = skipped
-
-                            if result.get("text") or images:
-                                return result
-
-                            if not PDF_TEXT_AVAILABLE and not PDF_IMAGE_AVAILABLE:
-                                result["error"] = (
-                                    "PDF handling requires pypdf (text) or pymupdf (images)."
-                                )
-                            elif not PDF_TEXT_AVAILABLE:
-                                result["error"] = (
-                                    "PDF text extraction requires pypdf."
-                                )
-                            elif not PDF_IMAGE_AVAILABLE:
-                                result["error"] = (
-                                    "PDF images require pymupdf."
-                                )
-                            else:
-                                result["error"] = (
-                                    "PDF content could not be extracted."
-                                )
-                            return result
-
-                        if not self._is_supported_content_type(content_type, raw_content):
-                            label = content_type if content_type else "unknown"
-                            result["error"] = f"Unsupported content type: {label}"
-                            return result
-
-                        result["content_type"] = content_type
-                        if "html" in content_type or "xml" in content_type:
-                            result["content_format"] = "html"
-                        elif content_type.startswith("text/"):
-                            result["content_format"] = "text"
+                        elif not PDF_TEXT_AVAILABLE:
+                            result["error"] = (
+                                "PDF text extraction requires pypdf."
+                            )
+                        elif not PDF_IMAGE_AVAILABLE:
+                            result["error"] = (
+                                "PDF images require pymupdf."
+                            )
                         else:
-                            result["content_format"] = "text"
-                        html = response.text
+                            result["error"] = (
+                                "PDF content could not be extracted."
+                            )
+                        return result
 
-                        title_match = re.search(
-                            r'<title[^>]*>(.*?)</title>',
+                    if not self._is_supported_content_type(content_type, raw_content):
+                        label = content_type if content_type else "unknown"
+                        result["error"] = f"Unsupported content type: {label}"
+                        return result
+
+                    result["content_type"] = content_type
+                    if "html" in content_type or "xml" in content_type:
+                        result["content_format"] = "html"
+                    elif content_type.startswith("text/"):
+                        result["content_format"] = "text"
+                    else:
+                        result["content_format"] = "text"
+
+                    encoding = "utf-8"
+                    charset_match = re.search(r"charset=([\\w-]+)", content_type)
+                    if charset_match:
+                        encoding = charset_match.group(1)
+                    html = raw_content.decode(encoding, errors="replace")
+
+                    title_match = re.search(
+                        r'<title[^>]*>(.*?)</title>',
+                        html,
+                        re.IGNORECASE | re.DOTALL,
+                    )
+                    if title_match:
+                        result["title"] = html_to_text(
+                            title_match.group(1),
+                            max_length=200,
+                        )
+
+                    main_content = html
+
+                    main_patterns = [
+                        r'<main[^>]*>(.*?)</main>',
+                        r'<article[^>]*>(.*?)</article>',
+                        r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+                        r'<div[^>]*id="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+                    ]
+
+                    for pattern in main_patterns:
+                        match = re.search(
+                            pattern,
                             html,
                             re.IGNORECASE | re.DOTALL,
                         )
-                        if title_match:
-                            result["title"] = html_to_text(
-                                title_match.group(1),
-                                max_length=200,
-                            )
+                        if match and len(match.group(1)) > 500:
+                            main_content = match.group(1)
+                            break
 
-                        main_content = html
+                    result["text"] = html_to_text(main_content, max_length)
+                    return result
 
-                        main_patterns = [
-                            r'<main[^>]*>(.*?)</main>',
-                            r'<article[^>]*>(.*?)</article>',
-                            r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
-                            r'<div[^>]*id="[^"]*content[^"]*"[^>]*>(.*?)</div>',
-                        ]
+                if should_retry and attempt < max_attempts - 1:
+                    wait_time = retry_wait if retry_wait is not None else backoff
+                    logger.warning(
+                        "Fetch attempt %s failed. Retrying in %.2fs.",
+                        attempt + 1,
+                        wait_time,
+                    )
+                    await asyncio.sleep(wait_time)
+                    backoff = min(backoff * 2, 30.0)
+                    continue
 
-                        for pattern in main_patterns:
-                            match = re.search(
-                                pattern,
-                                html,
-                                re.IGNORECASE | re.DOTALL,
-                            )
-                            if match and len(match.group(1)) > 500:
-                                main_content = match.group(1)
-                                break
-
-                        result["text"] = html_to_text(main_content, max_length)
-                        return result
-
-                    if should_retry and attempt < max_attempts - 1:
-                        wait_time = retry_wait if retry_wait is not None else backoff
-                        logger.warning(
-                            "Fetch attempt %s failed. Retrying in %.2fs.",
-                            attempt + 1,
-                            wait_time,
-                        )
-                        await asyncio.sleep(wait_time)
-                        backoff = min(backoff * 2, 30.0)
-                        continue
-
-                if last_error:
-                    result["error"] = f"Request failed: {last_error}"
-                else:
-                    result["error"] = "Request failed after retries"
-                return result
+            if last_error:
+                result["error"] = f"Request failed: {last_error}"
+            else:
+                result["error"] = "Request failed after retries"
+            return result
 
         except ValueError as e:
             result["error"] = str(e)
@@ -462,8 +547,7 @@ class WebFetcher:
                 "Accept": "application/json",
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(api_url, headers=headers)
+            response = await self._client.get(api_url, headers=headers, timeout=self.timeout)
 
             if response.status_code == 200:
                 data = response.json()
