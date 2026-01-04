@@ -63,7 +63,7 @@ export interface ChatRequest {
   embedding_config?: EmbeddingConfig;
 }
 
-export type ModelProvider = "openai" | "anthropic" | "gemini" | "custom";
+export type ModelProvider = "openai" | "openai_oauth" | "anthropic" | "gemini" | "custom";
 
 export type ApiMode = "responses" | "chat_completions";
 
@@ -230,4 +230,39 @@ export interface ChatState {
   currentSteps: Step[];
   currentSources: SourceItem[];
   reasoningSummary: string | null;
+}
+
+// OAuth Types
+export interface OAuthStartResponse {
+  authorization_url: string;
+  state: string;
+}
+
+export interface OAuthTokenResponse {
+  authenticated: boolean;
+  expires_at?: number | null;
+  account_email?: string | null;
+  account_name?: string | null;
+}
+
+export interface OAuthCallbackRequest {
+  code: string;
+  state: string;
+}
+
+export interface OAuthCallbackResponse {
+  success: boolean;
+  account_email?: string | null;
+  account_name?: string | null;
+  error?: string | null;
+}
+
+export interface OAuthRefreshResponse {
+  success: boolean;
+  expires_at?: number | null;
+  error?: string | null;
+}
+
+export interface OAuthLogoutResponse {
+  success: boolean;
 }

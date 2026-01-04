@@ -16,6 +16,12 @@ import type {
   ConfigResponse,
   ValidateModelRequest,
   ValidateModelResponse,
+  OAuthStartResponse,
+  OAuthTokenResponse,
+  OAuthCallbackRequest,
+  OAuthCallbackResponse,
+  OAuthRefreshResponse,
+  OAuthLogoutResponse,
 } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -256,4 +262,83 @@ export async function* chatStream(
     signal?.removeEventListener("abort", abortReader);
     reader.releaseLock();
   }
+}
+
+// OAuth API Functions
+
+export async function startOAuthFlow(): Promise<OAuthStartResponse> {
+  const response = await fetch(`${API_BASE}/api/oauth/openai/start`, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to start OAuth flow: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getOAuthStatus(): Promise<OAuthTokenResponse> {
+  const response = await fetch(`${API_BASE}/api/oauth/openai/status`, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to get OAuth status: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function submitOAuthCallback(
+  request: OAuthCallbackRequest
+): Promise<OAuthCallbackResponse> {
+  const response = await fetch(`${API_BASE}/api/oauth/openai/callback`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `OAuth callback failed: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function refreshOAuthToken(): Promise<OAuthRefreshResponse> {
+  const response = await fetch(`${API_BASE}/api/oauth/openai/refresh`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to refresh OAuth token: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function logoutOAuth(): Promise<OAuthLogoutResponse> {
+  const response = await fetch(`${API_BASE}/api/oauth/openai/logout`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || `Failed to logout: ${response.statusText}`);
+  }
+
+  return response.json();
 }

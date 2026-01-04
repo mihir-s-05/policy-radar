@@ -42,6 +42,7 @@ from ..clients.base import RateLimitError, APIError
 from ..clients.web_fetcher import WebFetcher
 from ..config import get_settings
 from ..security import require_api_key, rate_limit
+from .oauth_routes import get_oauth_access_token, get_oauth_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,11 @@ async def create_new_session():
 @router.get("/config", response_model=ConfigResponse)
 async def get_config():
     settings = get_settings()
+
+    # Check if OAuth is authenticated
+    oauth_token = get_oauth_access_token()
+    oauth_authenticated = oauth_token is not None
+
     providers = {
         "openai": ProviderInfo(
             name="openai",
@@ -69,6 +75,14 @@ async def get_config():
             base_url=settings.openai_base_url,
             models=settings.available_models,
             api_key_detected=bool(settings.openai_api_key),
+            api_mode="responses",
+        ),
+        "openai_oauth": ProviderInfo(
+            name="openai_oauth",
+            display_name="OpenAI (OAuth)",
+            base_url=settings.openai_base_url,
+            models=settings.available_models,
+            api_key_detected=oauth_authenticated,
             api_mode="responses",
         ),
         "anthropic": ProviderInfo(
@@ -133,8 +147,16 @@ async def validate_model(request: ValidateModelRequest):
     api_key = request.api_key
     base_url = request.base_url
 
-    if provider == "openai":
-        api_key = api_key or settings.openai_api_key
+    if provider == "openai" or provider == "openai_oauth":
+        # For openai_oauth, use the OAuth token
+        if provider == "openai_oauth":
+            oauth_token = get_oauth_access_token()
+            if not oauth_token:
+                return ValidateModelResponse(valid=False, message="OpenAI OAuth not authenticated. Please authenticate first.")
+            api_key = oauth_token
+        else:
+            api_key = api_key or settings.openai_api_key
+
         base_url = "https://api.openai.com/v1"
         if not api_key:
             return ValidateModelResponse(valid=False, message="OpenAI API key missing")
@@ -386,6 +408,12 @@ async def chat(request: ChatRequest):
             if request.custom_model.api_key:
                 api_key = request.custom_model.api_key
             api_mode = "chat_completions"
+        elif provider == "openai_oauth":
+            oauth_token = get_oauth_access_token()
+            if not oauth_token:
+                raise ValueError("OpenAI OAuth not authenticated. Please authenticate first in settings.")
+            api_key = oauth_token
+            api_mode = request.api_mode or settings.default_api_mode
         else:
             api_key = api_key or settings.openai_api_key
             api_mode = request.api_mode or settings.default_api_mode
@@ -495,6 +523,20 @@ async def chat_stream(request: ChatRequest):
                 if request.custom_model.api_key:
                     api_key = request.custom_model.api_key
                 api_mode = "chat_completions"
+            elif provider == "openai_oauth":
+                oauth_token = get_oauth_access_token()
+                if not oauth_token:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({
+                            "error": "oauth_not_authenticated",
+                            "message": "OpenAI OAuth not authenticated. Please authenticate first in settings.",
+                            "status_code": 401,
+                        }),
+                    }
+                    return
+                api_key = oauth_token
+                api_mode = request.api_mode or settings.default_api_mode
             else:
                 api_key = api_key or settings.openai_api_key
                 api_mode = request.api_mode or settings.default_api_mode

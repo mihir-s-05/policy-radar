@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Settings, Eye, EyeOff, CheckCircle, XCircle, Plus, Trash2, X } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Settings, Eye, EyeOff, CheckCircle, XCircle, Plus, Trash2, X, ExternalLink, LogOut, RefreshCw } from "lucide-react";
 import type {
     ApiMode,
     ModelProvider,
@@ -7,6 +7,7 @@ import type {
     ProviderInfo,
     EmbeddingProvider,
     EmbeddingProviderInfo,
+    OAuthTokenResponse,
 } from "../types";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
@@ -25,7 +26,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "./ui/Select";
-import { validateModel } from "../api/client";
+import { validateModel, startOAuthFlow, getOAuthStatus, logoutOAuth } from "../api/client";
 
 const SETTINGS_KEY = "policy-radar-settings";
 
@@ -140,11 +141,82 @@ export function SettingsModal({
     const [embeddingValidatingModel, setEmbeddingValidatingModel] = useState(false);
     const [embeddingValidationResult, setEmbeddingValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
 
+    // OAuth state
+    const [oauthStatus, setOauthStatus] = useState<OAuthTokenResponse | null>(null);
+    const [oauthLoading, setOauthLoading] = useState(false);
+    const [oauthError, setOauthError] = useState<string | null>(null);
+
     useEffect(() => {
         if (!settings.apiMode) {
             onSettingsChange({ ...settings, apiMode: defaultApiMode });
         }
     }, [settings, defaultApiMode, onSettingsChange]);
+
+    // Fetch OAuth status when modal opens or provider changes to openai_oauth
+    const fetchOAuthStatus = useCallback(async () => {
+        if (settings.provider !== "openai_oauth") return;
+        setOauthLoading(true);
+        setOauthError(null);
+        try {
+            const status = await getOAuthStatus();
+            setOauthStatus(status);
+        } catch (error) {
+            setOauthError(error instanceof Error ? error.message : "Failed to check OAuth status");
+            setOauthStatus(null);
+        } finally {
+            setOauthLoading(false);
+        }
+    }, [settings.provider]);
+
+    useEffect(() => {
+        if (open && settings.provider === "openai_oauth") {
+            fetchOAuthStatus();
+        }
+    }, [open, settings.provider, fetchOAuthStatus]);
+
+    const handleStartOAuth = async () => {
+        setOauthLoading(true);
+        setOauthError(null);
+        try {
+            const result = await startOAuthFlow();
+            // Open the authorization URL in a new window
+            window.open(result.authorization_url, "_blank", "width=600,height=700");
+            // Poll for status changes
+            const pollInterval = setInterval(async () => {
+                try {
+                    const status = await getOAuthStatus();
+                    if (status.authenticated) {
+                        setOauthStatus(status);
+                        clearInterval(pollInterval);
+                        setOauthLoading(false);
+                    }
+                } catch {
+                    // Ignore polling errors
+                }
+            }, 2000);
+            // Stop polling after 2 minutes
+            setTimeout(() => {
+                clearInterval(pollInterval);
+                setOauthLoading(false);
+            }, 120000);
+        } catch (error) {
+            setOauthError(error instanceof Error ? error.message : "Failed to start OAuth flow");
+            setOauthLoading(false);
+        }
+    };
+
+    const handleLogoutOAuth = async () => {
+        setOauthLoading(true);
+        setOauthError(null);
+        try {
+            await logoutOAuth();
+            setOauthStatus({ authenticated: false });
+        } catch (error) {
+            setOauthError(error instanceof Error ? error.message : "Failed to logout");
+        } finally {
+            setOauthLoading(false);
+        }
+    };
 
     const currentProviderInfo = providers[settings.provider];
     const currentEmbeddingProviderInfo = embeddingProviders[settings.embedding.provider];
@@ -580,6 +652,9 @@ export function SettingsModal({
                                 <SelectItem value="openai" style={{ fontFamily: "'Spectral', serif" }}>
                                     OpenAI
                                 </SelectItem>
+                                <SelectItem value="openai_oauth" style={{ fontFamily: "'Spectral', serif" }}>
+                                    OpenAI (OAuth)
+                                </SelectItem>
                                 <SelectItem value="anthropic" style={{ fontFamily: "'Spectral', serif" }}>
                                     Anthropic
                                 </SelectItem>
@@ -593,7 +668,7 @@ export function SettingsModal({
                         </Select>
                     </section>
 
-                    {settings.provider !== "custom" && (
+                    {settings.provider !== "custom" && settings.provider !== "openai_oauth" && (
                         <section className="flex flex-col gap-2">
                             <div className="flex items-center justify-between">
                                 <label
@@ -707,7 +782,7 @@ export function SettingsModal({
                         </section>
                     )}
 
-                    {settings.provider !== "custom" && (
+                    {settings.provider !== "custom" && settings.provider !== "openai_oauth" && (
                         <section className="flex flex-col gap-2">
                             <label
                                 className="text-xs font-semibold uppercase tracking-wider ink-faded"
@@ -766,6 +841,185 @@ export function SettingsModal({
                                     {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </Button>
                             </div>
+                        </section>
+                    )}
+
+                    {settings.provider === "openai_oauth" && (
+                        <section className="flex flex-col gap-4">
+                            <label
+                                className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                style={{ fontFamily: "'IM Fell English SC', serif" }}
+                            >
+                                OpenAI OAuth Authentication
+                            </label>
+
+                            <p
+                                className="text-xs ink-faded"
+                                style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+                            >
+                                Use your ChatGPT Plus/Pro subscription instead of API credits.
+                            </p>
+
+                            {oauthLoading ? (
+                                <div className="flex items-center gap-2 p-3 rounded border border-sepia-light/30 bg-parchment-200/20">
+                                    <RefreshCw className="h-4 w-4 animate-spin text-amber-600" />
+                                    <span
+                                        className="text-sm text-amber-700"
+                                        style={{ fontFamily: "'Spectral', serif" }}
+                                    >
+                                        {oauthStatus?.authenticated ? "Loading..." : "Waiting for authentication..."}
+                                    </span>
+                                </div>
+                            ) : oauthStatus?.authenticated ? (
+                                <div className="flex flex-col gap-3 p-3 rounded border border-green-500/30 bg-green-50/20">
+                                    <div className="flex items-center gap-2">
+                                        <CheckCircle className="h-5 w-5 text-green-600" />
+                                        <span
+                                            className="text-sm font-medium text-green-700"
+                                            style={{ fontFamily: "'Spectral', serif" }}
+                                        >
+                                            Authenticated
+                                        </span>
+                                    </div>
+                                    {oauthStatus.account_email && (
+                                        <p
+                                            className="text-xs ink-faded"
+                                            style={{ fontFamily: "'Spectral', serif" }}
+                                        >
+                                            Logged in as: <strong>{oauthStatus.account_email}</strong>
+                                        </p>
+                                    )}
+                                    <div className="flex gap-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="btn-parchment text-xs"
+                                            onClick={fetchOAuthStatus}
+                                        >
+                                            <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                                            Refresh
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-xs text-red-600 border-red-300 hover:bg-red-50"
+                                            onClick={handleLogoutOAuth}
+                                        >
+                                            <LogOut className="h-3.5 w-3.5 mr-1" />
+                                            Logout
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col gap-3 p-3 rounded border border-sepia-light/30 bg-parchment-200/20">
+                                    <div className="flex items-center gap-2">
+                                        <XCircle className="h-5 w-5 text-amber-600" />
+                                        <span
+                                            className="text-sm text-amber-700"
+                                            style={{ fontFamily: "'Spectral', serif" }}
+                                        >
+                                            Not authenticated
+                                        </span>
+                                    </div>
+                                    <p
+                                        className="text-xs ink-faded"
+                                        style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+                                    >
+                                        Click below to authenticate with your OpenAI account. A new browser window will open for you to sign in.
+                                    </p>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="btn-parchment self-start"
+                                        onClick={handleStartOAuth}
+                                    >
+                                        <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                                        <span style={{ fontFamily: "'IM Fell English SC', serif" }}>
+                                            Authenticate with OpenAI
+                                        </span>
+                                    </Button>
+                                </div>
+                            )}
+
+                            {oauthError && (
+                                <p className="text-xs text-red-600">
+                                    {oauthError}
+                                </p>
+                            )}
+
+                            {oauthStatus?.authenticated && (
+                                <>
+                                    <section className="flex flex-col gap-2 mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <label
+                                                className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                                style={{ fontFamily: "'IM Fell English SC', serif" }}
+                                            >
+                                                Model
+                                            </label>
+                                            {isUsingCustomModelList && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 text-xs ink-faded hover:ink-text"
+                                                    onClick={handleResetProviderModels}
+                                                >
+                                                    Reset to defaults
+                                                </Button>
+                                            )}
+                                        </div>
+
+                                        {availableModels.length > 0 ? (
+                                            <Select value={settings.model} onValueChange={handleModelChange}>
+                                                <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                                                    <SelectValue placeholder="Select model" />
+                                                </SelectTrigger>
+                                                <SelectContent className="parchment-bg border-sepia-light/50">
+                                                    {availableModels.map((model) => (
+                                                        <SelectItem
+                                                            key={model}
+                                                            value={model}
+                                                            style={{ fontFamily: "'Spectral', serif" }}
+                                                        >
+                                                            {model}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        ) : (
+                                            <p className="text-sm ink-faded italic">No models available</p>
+                                        )}
+                                    </section>
+
+                                    <section className="flex flex-col gap-2">
+                                        <label
+                                            className="text-xs font-semibold uppercase tracking-wider ink-faded"
+                                            style={{ fontFamily: "'IM Fell English SC', serif" }}
+                                        >
+                                            API Mode
+                                        </label>
+                                        <p
+                                            className="text-xs ink-faded"
+                                            style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
+                                        >
+                                            Responses API (newer, maintains conversation) or Chat Completions (standard).
+                                        </p>
+                                        <Select value={settings.apiMode} onValueChange={handleApiModeChange}>
+                                            <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                                                <SelectValue placeholder="Select API mode" />
+                                            </SelectTrigger>
+                                            <SelectContent className="parchment-bg border-sepia-light/50">
+                                                <SelectItem value="responses" style={{ fontFamily: "'Spectral', serif" }}>
+                                                    Responses API
+                                                </SelectItem>
+                                                <SelectItem value="chat_completions" style={{ fontFamily: "'Spectral', serif" }}>
+                                                    Chat Completions
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </section>
+                                </>
+                            )}
                         </section>
                     )}
 

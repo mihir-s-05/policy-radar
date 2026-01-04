@@ -70,7 +70,7 @@ class ChatRequest(BaseModel):
     sources: Optional[SourceSelection] = None
     days: int = Field(default=30, ge=7, le=90)
     model: Optional[str] = None
-    provider: Optional[Literal["openai", "anthropic", "gemini", "custom"]] = None
+    provider: Optional[Literal["openai", "anthropic", "gemini", "custom", "openai_oauth"]] = None
     api_mode: Optional[Literal["responses", "chat_completions"]] = None
     custom_model: Optional[CustomModelConfig] = None
     api_key: Optional[str] = None
@@ -169,7 +169,7 @@ class ConfigResponse(BaseModel):
 
 
 class ValidateModelRequest(BaseModel):
-    provider: Literal["openai", "anthropic", "gemini", "custom"]
+    provider: Literal["openai", "anthropic", "gemini", "custom", "openai_oauth"]
     model_name: str
     api_key: Optional[str] = None
     base_url: Optional[str] = None

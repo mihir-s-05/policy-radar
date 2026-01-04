@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import router
+from .api import router, oauth_router
 from .models.database import init_db
 from .config import get_settings
 from .clients.base import BaseAPIClient
@@ -64,6 +64,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(oauth_router)
 
 
 @app.get("/")
