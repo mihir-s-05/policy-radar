@@ -13,6 +13,7 @@ import hashlib
 import secrets
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlencode, urlparse, parse_qs
@@ -25,7 +26,11 @@ logger = logging.getLogger(__name__)
 OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 OAUTH_AUTHORIZATION_ENDPOINT = "https://auth.openai.com/authorize"
 OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
-OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback"
+_OAUTH_DEFAULT_REDIRECT_PATH = "/api/oauth/openai/callback"
+OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI")
+if not OAUTH_REDIRECT_URI:
+    port = os.getenv("PORT", "8000")
+    OAUTH_REDIRECT_URI = f"http://localhost:{port}{_OAUTH_DEFAULT_REDIRECT_PATH}"
 OAUTH_SCOPE = "openid email profile offline_access"
 OAUTH_AUDIENCE = "https://api.openai.com/v1"
 

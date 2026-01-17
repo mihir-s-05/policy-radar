@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     openai_base_url: str = "https://api.openai.com/v1"
     anthropic_base_url: str = "https://api.anthropic.com/v1"
-    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
     anthropic_models: list[str] = [
         "claude-opus-4-5-20251101",
@@ -44,8 +44,10 @@ class Settings(BaseSettings):
         "claude-haiku-4-5-20251001",
     ]
     gemini_models: list[str] = [
-        "gemini-3-pro",
-        "gemini-3-flash-preview",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
     ]
 
     local_embedding_models: list[str] = [

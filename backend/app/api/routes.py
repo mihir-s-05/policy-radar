@@ -36,6 +36,7 @@ from ..models.database import (
     update_message_content,
 )
 from ..services.openai_service import OpenAIService
+from ..services.gemini_service import GeminiService
 from ..services.pdf_memory import get_pdf_memory_store
 from ..services.chat_cancellation import get_chat_cancellation_manager
 from ..clients.base import RateLimitError, APIError
@@ -96,10 +97,10 @@ async def get_config():
         "gemini": ProviderInfo(
             name="gemini",
             display_name="Google Gemini",
-            base_url=settings.gemini_base_url,
+            base_url="https://generativelanguage.googleapis.com/v1beta",
             models=settings.gemini_models,
             api_key_detected=bool(settings.google_api_key),
-            api_mode="chat_completions",
+            api_mode="native",
         ),
     }
     embedding_providers = {
@@ -399,9 +400,37 @@ async def chat(request: ChatRequest):
             api_key = api_key or settings.anthropic_api_key
             api_mode = "chat_completions"
         elif provider == "gemini":
-            base_url = settings.gemini_base_url
-            api_key = api_key or settings.google_api_key
-            api_mode = "chat_completions"
+            # Use native Gemini service
+            gemini_service = GeminiService(
+                session_id=request.session_id,
+                api_key=api_key or settings.google_api_key,
+                embedding_config=request.embedding_config,
+            )
+            answer_text, sources, reasoning_summary, steps, new_response_id, model_used = (
+                await gemini_service.chat(
+                    message=request.message,
+                    mode=request.mode or "both",
+                    days=request.days,
+                    model=model_override,
+                    sources=request.sources,
+                    cancel_event=cancel_event,
+                )
+            )
+
+            await update_session_response_id(request.session_id, new_response_id)
+
+            assistant_message_id = await add_message(request.session_id, "assistant", answer_text)
+            if sources:
+                sources_json = json.dumps([s.model_dump() for s in sources])
+                await save_sources(request.session_id, assistant_message_id, sources_json)
+
+            return ChatResponse(
+                answer_text=answer_text,
+                sources=sources,
+                reasoning_summary=reasoning_summary,
+                steps=steps,
+                model=model_used,
+            )
         elif provider == "custom" and request.custom_model:
             base_url = request.custom_model.base_url
             model_override = request.custom_model.model_name
@@ -514,9 +543,48 @@ async def chat_stream(request: ChatRequest):
                 api_key = api_key or settings.anthropic_api_key
                 api_mode = "chat_completions"
             elif provider == "gemini":
-                base_url = settings.gemini_base_url
-                api_key = api_key or settings.google_api_key
-                api_mode = "chat_completions"
+                # Use native Gemini service for streaming
+                gemini_service = GeminiService(
+                    session_id=request.session_id,
+                    api_key=api_key or settings.google_api_key,
+                    embedding_config=request.embedding_config,
+                )
+
+                final_answer = ""
+                final_sources = []
+
+                async for event in gemini_service.chat_stream(
+                    message=request.message,
+                    mode=request.mode or "both",
+                    days=request.days,
+                    model=model_override,
+                    sources=request.sources,
+                    cancel_event=cancel_event,
+                ):
+                    event_type = event.get("event", "message")
+                    event_data = event.get("data", {})
+
+                    if event_type == "done":
+                        final_answer = event_data.get("answer_text", "")
+                        final_sources = event_data.get("sources", [])
+                        new_response_id = event_data.get("response_id")
+
+                        if new_response_id:
+                            await update_session_response_id(request.session_id, new_response_id)
+                        assistant_message_id = await add_message(
+                            request.session_id,
+                            "assistant",
+                            final_answer,
+                        )
+                        if final_sources:
+                            sources_json = json.dumps(final_sources)
+                            await save_sources(request.session_id, assistant_message_id, sources_json)
+
+                    yield {
+                        "event": event_type,
+                        "data": json.dumps(event_data),
+                    }
+                return
             elif provider == "custom" and request.custom_model:
                 base_url = request.custom_model.base_url
                 model_override = request.custom_model.model_name
