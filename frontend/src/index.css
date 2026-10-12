@@ -551,7 +551,7 @@
   .mobile-sources-trigger > span { position: absolute; top: 1px; right: 0; min-width: 16px; padding: 1px 3px; border-radius: 8px; background: hsl(var(--wax-red)); color: white; font: 11px/14px 'Spectral', serif; }
   .sidebar-resizable-grid { display: flex; gap: 0 !important; padding: 8px max(8px, env(safe-area-inset-right, 0px)) 8px max(8px, env(safe-area-inset-left, 0px)); }
   .sidebar-resizable-grid > .sidebar-resize-handle, .desktop-particulars { display: none; }
-  .sidebar-resizable-grid > .research-pane { flex: 1; min-height: 0; contain: none; }
+  .sidebar-resizable-grid > div.research-pane { flex: 1; min-height: 0; contain: none; }
   .desktop-research-controls, .composer-note, .mobile-welcome-title, .welcome-description { display: none; }
   .welcome-scroll { display: block; padding: 16px 12px; }
   .welcome-document { gap: 16px; width: 100%; max-width: 520px; padding: 16px; margin: 0 auto; }
