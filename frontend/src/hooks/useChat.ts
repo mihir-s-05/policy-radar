@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { chatStream, chat, stopChat } from "../api/client";
+import { chatStream, chat, stopChat, isBrowserExecution } from "../api/client";
 import type { Message, Step, SourceItem, SourceSelection, ApiMode, CustomModelConfig, ModelProvider, EmbeddingConfig } from "../types";
 
 interface UseChatOptions {
@@ -19,7 +19,7 @@ export function useChat({ sessionId }: UseChatOptions) {
   const stopRequestedRef = useRef(false);
   const cancelledMessage = "*Request cancelled by user.*";
 
-  const markCancelledSteps = (steps: Step[]) =>
+  const markCancelledSteps = (steps: Step[]): Step[] =>
     steps.map((step) => {
       if (step.status !== "running") return step;
       const label = step.label ? `${step.label} (cancelled)` : "Cancelled";
@@ -262,6 +262,11 @@ export function useChat({ sessionId }: UseChatOptions) {
           return;
         }
 
+        if (isBrowserExecution()) {
+          setError(e instanceof Error ? e.message : "The inquiry failed.");
+          setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+          return;
+        }
         console.error("Streaming failed, trying non-streaming:", e);
 
         try {

@@ -158,7 +158,7 @@ export function MessageList({
   if (messages.length === 0) {
     if (isLoading) {
       return (
-        <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-8 text-center">
           <div className="flex flex-col items-center gap-4">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             <p className="text-muted-foreground manuscript-font">Loading previous session...</p>
@@ -168,8 +168,8 @@ export function MessageList({
     }
 
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8 text-center">
-        <div className="parchment-bg aged-edge flex max-w-lg flex-col gap-6 rounded-lg p-8">
+      <div className="welcome-scroll flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-8 text-center">
+        <div className="welcome-document parchment-bg aged-edge flex max-w-lg shrink-0 flex-col gap-6 rounded-lg p-8">
           <div className="flex flex-col items-center gap-3">
             <div className="flourish-divider w-full mb-2">
               <span className="px-4 text-2xl" style={{ fontFamily: "'IM Fell English SC', serif" }}>
@@ -274,7 +274,7 @@ export function MessageList({
   };
 
   return (
-    <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-4 md:p-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4 md:p-6">
       {messages.map((message) => {
         const isUser = message.role === "user";
         return (

@@ -16,6 +16,7 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
     DialogTrigger,
     DialogFooter,
 } from "./ui/Dialog";
@@ -27,8 +28,7 @@ import {
     SelectValue,
 } from "./ui/Select";
 import { validateModel, startOAuthFlow, getOAuthStatus, logoutOAuth } from "../api/client";
-
-const SETTINGS_KEY = "policy-radar-settings";
+import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../lib/settingsStorage";
 
 export interface UserSettings {
     provider: ModelProvider;
@@ -46,6 +46,7 @@ export interface UserSettings {
     };
     customModels: CustomModelConfig[];
     embedding: EmbeddingSettings;
+    hostedEmbeddingsInitialized?: boolean;
 }
 
 export interface EmbeddingSettings {
@@ -57,6 +58,7 @@ export interface EmbeddingSettings {
     };
     providerModels: {
         local?: string[];
+        cloudflare?: string[];
         openai?: string[];
         huggingface?: string[];
     };
@@ -65,51 +67,8 @@ export interface EmbeddingSettings {
     };
 }
 
-const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
-    provider: "local",
-    model: "sentence-transformers/all-MiniLM-L6-v2",
-    apiKeys: {},
-    providerModels: {},
-    baseUrls: {},
-};
-
-const DEFAULT_SETTINGS: UserSettings = {
-    provider: "openai",
-    model: "gpt-5.2",
-    apiMode: "responses",
-    apiKeys: {},
-    providerModels: {},
-    customModels: [],
-    embedding: DEFAULT_EMBEDDING_SETTINGS,
-};
-
-function loadSettings(): UserSettings {
-    try {
-        const stored = localStorage.getItem(SETTINGS_KEY);
-        if (stored) {
-            const parsed = JSON.parse(stored);
-            return {
-                ...DEFAULT_SETTINGS,
-                ...parsed,
-                embedding: {
-                    ...DEFAULT_EMBEDDING_SETTINGS,
-                    ...(parsed.embedding || {}),
-                },
-            };
-        }
-    } catch {
-    }
-    return DEFAULT_SETTINGS;
-}
-
-function saveSettings(settings: UserSettings): void {
-    try {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    } catch {
-    }
-}
-
 interface SettingsModalProps {
+    publicMode?: boolean;
     settings: UserSettings;
     onSettingsChange: (settings: UserSettings) => void;
     providers?: Record<string, ProviderInfo>;
@@ -118,6 +77,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({
+    publicMode = false,
     settings,
     onSettingsChange,
     providers = {},
@@ -242,6 +202,7 @@ export function SettingsModal({
     const currentApiKey = settings.apiKeys[settings.provider as keyof typeof settings.apiKeys] || "";
 
     const getEmbeddingModelsForProvider = (provider: EmbeddingProvider): string[] => {
+        if (embeddingProviders.cloudflare) return embeddingProviders[provider]?.models || [];
         const userModels = settings.embedding.providerModels[provider as keyof typeof settings.embedding.providerModels];
         if (userModels && userModels.length > 0) {
             return userModels;
@@ -267,7 +228,7 @@ export function SettingsModal({
         const models = getModelsForProvider(value);
         const defaultModel = models[0] || "";
         const providerInfo = providers[value];
-        const defaultApiMode = providerInfo?.api_mode || "chat_completions";
+        const defaultApiMode: ApiMode = providerInfo?.api_mode === "responses" ? "responses" : "chat_completions";
 
         onSettingsChange({
             ...settings,
@@ -613,6 +574,7 @@ export function SettingsModal({
                     >
                         Configuration
                     </DialogTitle>
+                    <DialogDescription className="sr-only">Choose your model provider, API key, and PDF embedding settings.</DialogDescription>
                 </DialogHeader>
 
                 <div className="flex flex-col gap-4">
@@ -652,7 +614,7 @@ export function SettingsModal({
                                 <SelectItem value="openai" style={{ fontFamily: "'Spectral', serif" }}>
                                     OpenAI
                                 </SelectItem>
-                                <SelectItem value="openai_oauth" style={{ fontFamily: "'Spectral', serif" }}>
+                                <SelectItem value="openai_oauth" disabled={publicMode} style={{ fontFamily: "'Spectral', serif" }}>
                                     OpenAI (OAuth)
                                 </SelectItem>
                                 <SelectItem value="anthropic" style={{ fontFamily: "'Spectral', serif" }}>
@@ -661,7 +623,7 @@ export function SettingsModal({
                                 <SelectItem value="gemini" style={{ fontFamily: "'Spectral', serif" }}>
                                     Google Gemini
                                 </SelectItem>
-                                <SelectItem value="custom" style={{ fontFamily: "'Spectral', serif" }}>
+                                <SelectItem value="custom" disabled={publicMode} style={{ fontFamily: "'Spectral', serif" }}>
                                     Custom Endpoint
                                 </SelectItem>
                             </SelectContent>
@@ -821,7 +783,7 @@ export function SettingsModal({
                             >
                                 {apiKeyDetected
                                     ? "Enter a key below to override the environment key."
-                                    : "Enter your API key to use this provider."}
+                                    : publicMode ? "Use your own API key. It is kept for this tab and sent through the server to your provider. Your provider bills your usage." : "Enter your API key to use this provider."}
                             </p>
                             <div className="flex gap-2">
                                 <Input
@@ -1173,12 +1135,15 @@ export function SettingsModal({
                                         <SelectItem value="local" style={{ fontFamily: "'Spectral', serif" }}>
                                             Local
                                         </SelectItem>
+                                        {embeddingProviders.cloudflare && <SelectItem value="cloudflare" style={{ fontFamily: "'Spectral', serif" }}>Cloudflare (free)</SelectItem>}
+                                        {!embeddingProviders.cloudflare && <>
                                         <SelectItem value="openai" style={{ fontFamily: "'Spectral', serif" }}>
                                             OpenAI
                                         </SelectItem>
                                         <SelectItem value="huggingface" style={{ fontFamily: "'Spectral', serif" }}>
                                             Hugging Face
                                         </SelectItem>
+                                        </>}
                                     </SelectContent>
                                 </Select>
                             </section>
@@ -1241,6 +1206,7 @@ export function SettingsModal({
                                             >
                                                 {model}
                                                 <button
+                                                    disabled={Boolean(embeddingProviders.cloudflare)}
                                                     onClick={() => handleRemoveEmbeddingModelFromProvider(model)}
                                                     className="p-0.5 hover:text-destructive"
                                                     title="Remove model"
@@ -1253,6 +1219,7 @@ export function SettingsModal({
 
                                     <div className="flex gap-2">
                                         <Input
+                                            disabled={Boolean(embeddingProviders.cloudflare)}
                                             type="text"
                                             value={newEmbeddingModelName}
                                             onChange={(e) => setNewEmbeddingModelName(e.target.value)}
@@ -1266,7 +1233,7 @@ export function SettingsModal({
                                             size="sm"
                                             className="btn-parchment"
                                             onClick={handleAddEmbeddingModelToProvider}
-                                            disabled={!newEmbeddingModelName.trim() || embeddingValidatingModel}
+                                            disabled={Boolean(embeddingProviders.cloudflare) || !newEmbeddingModelName.trim() || embeddingValidatingModel}
                                         >
                                             <Plus className="h-3.5 w-3.5" />
                                         </Button>
@@ -1297,7 +1264,7 @@ export function SettingsModal({
                                 </div>
                             </section>
 
-                            {settings.embedding.provider !== "local" && (
+                            {settings.embedding.provider !== "local" && settings.embedding.provider !== "cloudflare" && (
                                 <section className="flex flex-col gap-2">
                                     <label
                                         className="text-xs font-semibold uppercase tracking-wider ink-faded"

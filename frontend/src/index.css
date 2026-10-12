@@ -504,3 +504,34 @@
 .sidebar-resize-handle {
   z-index: 10;
 }
+
+/* Keep the existing desktop manuscript; make its rails usable on smaller screens. */
+@media (max-width: 1023px) {
+  .sidebar-resizable-grid {
+    grid-template-columns: var(--left-sidebar-width) 6px minmax(0, 1fr) !important;
+    padding: 8px;
+    gap: 4px !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .sidebar-resizable-grid {
+    grid-template-columns: 48px minmax(0, 1fr) !important;
+    gap: 6px !important;
+  }
+  .sidebar-resizable-grid > aside:first-child {
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: var(--left-sidebar-width);
+    z-index: 20;
+  }
+  .sidebar-resizable-grid > .sidebar-resize-handle { display: none; }
+  .research-pane { grid-column: 2; grid-row: 1; }
+  .research-controls { gap: 8px; }
+  .research-controls .embedding-control { max-width: 100%; }
+  .welcome-scroll { justify-content: flex-start; padding: 16px; }
+  .welcome-document { padding: 20px; }
+  .research-composer { padding: 8px; gap: 8px; }
+}

@@ -27,7 +27,7 @@ A research chatbot for tracking U.S. federal policy activity across multiple off
 | `OPENAI_API_KEY` | Yes* | - | OpenAI API key (required when using OpenAI provider) |
 | `ANTHROPIC_API_KEY` | No | - | Anthropic API key |
 | `GOOGLE_API_KEY` | No | - | Google Gemini API key |
-| `OPENAI_MODEL` | No | `gpt-5.2` | Default OpenAI model |
+| `OPENAI_MODEL` | No | `gpt-6.1-sol` | Default OpenAI model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model for PDF RAG |
 | `DEFAULT_API_MODE` | No | `responses` | OpenAI API mode: `responses` or `chat_completions` |
 | `PORT` | No | `8000` | Backend port |
@@ -43,7 +43,7 @@ The UI settings panel lets you:
 - Switch OpenAI API mode between Responses and Chat Completions.
 - Add or remove provider model names, with validation against provider APIs.
 - Add custom OpenAI-compatible endpoints (vLLM, Ollama, LM Studio, etc.).
-- Override API keys locally (stored in browser local storage).
+- Enter provider keys for the current browser tab (session storage, with an in-memory fallback).
 
 ## Quick Start
 
@@ -106,7 +106,7 @@ npm run dev
     "searchgov": false
   },
   "days": 30,
-  "model": "gpt-5.2",
+  "model": "gpt-6.1-sol",
   "provider": "openai",
   "api_mode": "responses",
   "custom_model": {
@@ -154,6 +154,171 @@ policy_chatbotv2/
 - All government API calls are made from the backend.
 - SQLite stores session data locally.
 - ChromaDB stores PDF embeddings locally under `RAG_PERSIST_DIR`.
+
+## Hosted app with visitor API keys
+
+The public product keeps the existing manuscript frontend, chat, source reader,
+and research work log. Set `PUBLIC_MODE=true` on the backend to require visitors'
+OpenAI, Anthropic, or Gemini keys. Host model and embedding credentials are ignored
+in this mode, even if they are present in the environment. Missing keys are rejected
+before saving the request or starting model work. Shared OAuth and custom endpoints
+are disabled in hosted mode; they remain available locally.
+
+Provider and embedding keys live in the current tab's session storage, with an
+in-memory fallback. Non-secret preferences remain in local storage. Older persistent
+keys are erased during migration and must be entered again. In the hosted app,
+keys pass through a fixed-provider Worker relay; visitors pay their chat provider's
+API charges. The Worker has no owner chat key. Cloudflare embeddings use the free
+allocation, while Local embeddings run on the visitor's device. API keys are not
+stored in D1, document indexes, or logs. Python remains available for local development.
+
+Hosted sessions require a random browser-held `X-Session-Token`. Only its hash is
+stored on sessions; listing, reading, editing, deleting, chatting, and cancellation
+are scoped to that browser. Old local sessions have no public owner and stay hidden.
+This is browser-scoped access, not account login or cross-device sync. Clearing site
+storage loses the browser's capability to retrieve its saved sessions.
+
+Hosted D1 saves messages, citations, research steps, and model names. Document text
+and model-specific vector indexes stay in the visitor's IndexedDB. Cloudflare and
+MiniLM vectors are never mixed, even though both have 384 dimensions. Deleting a
+session also removes its browser index. The new hosted database starts empty;
+the private Python SQLite/Chroma data is not uploaded.
+
+### Current model catalog
+
+Catalog verified October 9, 2026. Prices below are standard USD per million input /
+output tokens, excluding cache discounts, reasoning volume, and provider tools.
+
+| Provider | Models (input / output) | Intended choice |
+|----------|-------------------------|-----------------|
+| OpenAI | `gpt-6.1-sol` ($2 / $10), `gpt-6-luna` ($0.10 / $0.50), `gpt-6-astra` ($10 / $50) | Balanced default, budget, premium reasoning |
+| Anthropic | `claude-opus-5-5` ($4 / $20), `claude-sonnet-5-5` ($2 / $10), `claude-haiku-5-5` ($0.10 / $0.50) | High capability, balanced, budget |
+| Gemini | `gemini-3.8-flash` ($0.75 / $3.75), `gemini-3.5-flash-lite` ($0.30 / $2.50), `gemini-3.1-pro-preview` ($2 / $12) | Fast default, budget, Pro preview |
+
+OpenAI long-context pricing is higher. Haiku's quoted tier is for prompts up to
+100,000 tokens; larger prompts cost $0.50 / $2.50. Gemini Pro's quoted tier is up to
+200,000 input tokens. Gemini 3.8 Flash prices double on January 1, 2027. Astra is a
+premium option, not a promise of identical cost to the former reasoning choice.
+Old preset models and old saved picker lists are removed; user-added models can
+still be validated with the visitor's own key. Availability and prices are verified
+from documentation, not by billable live completions.
+
+Sources: [OpenAI models](https://developers.openai.com/api/docs/models),
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing),
+[Claude models](https://platform.claude.com/docs/en/models/overview),
+[Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing),
+[Gemini models](https://ai.google.dev/gemini-api/docs/models),
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+### Shared government access
+
+Keep the free `GOV_API_KEY` on the server, separate from visitor model credentials.
+The documented quotas are suitable for occasional portfolio use with caching.
+
+| Source | Published quota | Reference |
+|--------|-----------------|-----------|
+| Regulations.gov reads / api.data.gov default | 1,000 requests per rolling hour per key | [GSA API](https://open.gsa.gov/api/regulationsgov/), [api.data.gov](https://api.data.gov/docs/developer-manual/) |
+| Congress.gov | 5,000 requests per hour | [Library of Congress](https://github.com/LibraryOfCongress/api.congress.gov/blob/main/README.md) |
+| GovInfo | 36,000/hour, 1,200/minute, 40/second | [GPO API](https://github.com/usgpo/api/blob/main/README.md#keys) |
+| Search.gov | 1,000/hour with a separate affiliate/access-key setup | [GSA Search.gov](https://open.gsa.gov/api/searchgov-results/) |
+
+Published service-specific limits override the general default; actual key usage
+must be checked from `X-RateLimit-Limit` and `X-RateLimit-Remaining`. A research run
+can make many upstream calls, so these are request quotas, not user/session quotas.
+Budgeting 20 uncached calls per run would allow roughly 50 runs/hour at the most
+restrictive default; that is a planning estimate, not a measured run cost.
+
+Current code already caches GET responses for ten minutes in process and retries
+429s. GovInfo search POSTs and source-text fetches need shared caching. Before public
+launch, add a durable app-wide budget with reserve capacity and upstream-header
+telemetry; do not rely on the current per-process inbound IP limiter alone.
+
+### Cloudflare Free deployment
+
+Live app: **https://policy-radar.m-srivastava.workers.dev/**. The dashboard showed
+**Free / Current plan / $0** on October 11, 2026. Keep this account on Workers Free:
+Cloudflare blocks excess Workers AI use on Free; Paid accounts charge for overage.
+This deployment uses Workers Static Assets, Workers AI, and D1.
+
+The existing frontend keeps its layout and styling. Small Worker endpoints relay
+visitor chat requests and government API calls. The research loop, PDF.js extraction,
+and vector search run in the browser to avoid a heavy server workload. D1 stores
+owned sessions, request cancellation, the government cache, and atomic budgets.
+Production uses same-origin requests through `frontend/.env.production`.
+
+The default embedding model is `@cf/baai/bge-small-en-v1.5`. Before every call, D1
+atomically reserves a conservative estimate using UTF-8 bytes, a 2x margin, and
+per-text overhead. The shared daily reservation limit is 8,000, below Cloudflare's
+10,000-neuron/day free allowance. Failed calls retain their reservations. Any
+upstream error blocks embeddings for the remaining UTC day. The browser stops
+sending calls after a quota rejection, and no paid fallback runs. Cloudflare's
+account-wide Free limit is the final billing protection if other apps use the quota.
+
+The allowance resets at 00:00 UTC. Chat and direct document reading can still work
+when embeddings stop. Visitors may manually select Local in Configuration's existing
+Embedding tab. Local uses pinned q8 MiniLM in a Web Worker, lazy loading, model
+caching, and a single WASM thread. The build downloads and verifies the public
+model files from an immutable Hub revision; Cloudflare serves them as static assets.
+Only the CPU/WASM runtime is bundled; local inference batches at most eight chunks
+to bound activation memory. It needs an initial model/runtime download, then
+uses device CPU. Switching models requires indexing documents with that model.
+PDFs are bounded to 12 MB and 200 pages; indexing is bounded to 400 overlapping
+chunks per document. Scanned pages retain a bounded image-reading path with the
+visitor's chat model. Government requests share an 800-request rolling hourly
+budget and reuse cached searches for ten minutes. Only the government key is
+deployed as a secret. Search.gov needs separate affiliate/access-key configuration.
+Hourly maintenance clears expired caches, budgets, and request-control records.
+
+For a new deployment, first verify Workers Free in the dashboard, create an empty
+D1 database, and put its ID in `cloudflare/wrangler.jsonc`:
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ../cloudflare
+npm ci
+npm run types
+npm run check
+npm run test
+npx wrangler d1 migrations apply DB --remote
+npm run deploy
+npx wrangler secret put GOV_API_KEY
+```
+
+Never deploy an owner OpenAI/Anthropic/Gemini key. The relay uses fixed provider
+endpoints and disables OpenAI response storage. A provider stream error does not
+automatically repeat a potentially billable chat request.
+
+The separate `/benchmark` page compares 48 identical synthetic policy passages and
+six paraphrased queries. It reports initialization, throughput, warm queries,
+ranking, retrieval matches, persistent-index reuse, and cached local reinitialization.
+Download its JSON to preserve a run. It also tests the browser document reader.
+These are functional comparisons, not comprehensive retrieval-quality benchmarks;
+times depend on browser, device, network, and cache state.
+
+References: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
+[Workers AI free quota](https://developers.cloudflare.com/workers-ai/platform/pricing/),
+[D1 free limits](https://developers.cloudflare.com/d1/platform/pricing/),
+[BGE small](https://developers.cloudflare.com/workers-ai/models/bge-small-en-v1.5/),
+[Transformers.js](https://huggingface.co/docs/transformers.js/index).
+
+### Local validation
+
+```bash
+cd backend
+python -m pytest tests -q
+cd ../frontend
+node --test tests/settings-storage.test.cjs
+npm run build
+cd ../cloudflare
+npm run check
+npm run test
+```
+
+The hosted billing/ownership tests mock providers and forbid external network calls.
+The storage tests use isolated synthetic storage objects, not a person's browser data.
+The existing project-wide ESLint failures still need separate cleanup.
 
 ## License
 

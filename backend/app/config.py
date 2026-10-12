@@ -2,6 +2,7 @@ import json
 import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 
 
 def _get_bool_env(name: str, default: bool = False) -> bool:
@@ -12,12 +13,14 @@ def _get_bool_env(name: str, default: bool = False) -> bool:
 
 
 class Settings(BaseSettings):
+    public_mode: bool = False
+    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "http://127.0.0.1:3000"]
     gov_api_key: str = os.getenv("GOV_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
 
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.2")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "local")
     embedding_model: str = os.getenv(
         "EMBEDDING_MODEL",
@@ -31,7 +34,7 @@ class Settings(BaseSettings):
     port: int = int(os.getenv("PORT", "8000"))
 
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
-    available_models: list[str] = ["gpt-5.2", "gpt-5-mini", "gpt-5.1", "o3"]
+    available_models: list[str] = ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra"]
     default_api_mode: str = os.getenv("DEFAULT_API_MODE", "responses")
 
     openai_base_url: str = "https://api.openai.com/v1"
@@ -39,15 +42,14 @@ class Settings(BaseSettings):
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
 
     anthropic_models: list[str] = [
-        "claude-opus-4-5-20251101",
-        "claude-sonnet-4-5-20250929",
-        "claude-haiku-4-5-20251001",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
     ]
     gemini_models: list[str] = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-pro-preview",
     ]
 
     local_embedding_models: list[str] = [
@@ -98,6 +100,20 @@ class Settings(BaseSettings):
     allow_local_fetch: bool = _get_bool_env("ALLOW_LOCAL_FETCH", False)
     fetch_max_response_bytes: int = int(os.getenv("FETCH_MAX_RESPONSE_BYTES", "10000000"))
     pdf_extract_images: bool = _get_bool_env("PDF_EXTRACT_IMAGES", False)
+
+    @model_validator(mode="after")
+    def enforce_public_credentials(self):
+        if self.public_mode:
+            # Even accidentally configured host credentials must never fund visitors.
+            self.openai_api_key = ""
+            self.anthropic_api_key = ""
+            self.google_api_key = ""
+            self.huggingface_api_key = ""
+            self.embedding_provider = "local"
+            self.embedding_model = self.local_embedding_models[0]
+        if self.openai_model not in self.available_models:
+            self.openai_model = self.available_models[0]
+        return self
 
     @property
     def fetch_allowed_domains(self) -> list[str]:

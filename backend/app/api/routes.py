@@ -42,7 +42,7 @@ from ..services.chat_cancellation import get_chat_cancellation_manager
 from ..clients.base import RateLimitError, APIError
 from ..clients.web_fetcher import WebFetcher
 from ..config import get_settings
-from ..security import require_api_key, rate_limit
+from ..security import require_api_key, rate_limit, browser_owner, require_visitor_credentials
 from .oauth_routes import get_oauth_access_token, get_oauth_tokens
 
 logger = logging.getLogger(__name__)
@@ -51,9 +51,9 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key), Depend
 
 
 @router.post("/session", response_model=SessionResponse)
-async def create_new_session():
+async def create_new_session(owner_hash: str | None = Depends(browser_owner)):
     try:
-        session_id = await create_session()
+        session_id = await create_session(owner_hash=owner_hash)
         logger.info(f"Created new session: {session_id}")
         return SessionResponse(session_id=session_id)
     except Exception as e:
@@ -125,7 +125,10 @@ async def get_config():
             api_key_detected=bool(settings.huggingface_api_key),
         ),
     }
+    if settings.public_mode:
+        providers.pop("openai_oauth", None)
     return ConfigResponse(
+        public_mode=settings.public_mode,
         model=settings.openai_model,
         available_models=settings.available_models,
         default_api_mode=settings.default_api_mode,
@@ -139,6 +142,8 @@ async def get_config():
 @router.post("/validate-model", response_model=ValidateModelResponse)
 async def validate_model(request: ValidateModelRequest):
     import httpx
+
+    require_visitor_credentials(request)
 
     settings = get_settings()
 
@@ -219,7 +224,7 @@ async def validate_model(request: ValidateModelRequest):
             full_model_name = f"models/{model_name}" if not model_name.startswith("models/") else model_name
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"{base_url}/models?key={api_key}"
+                    f"{base_url}/models", headers={"x-goog-api-key": api_key}
                 )
                 if response.status_code != 200:
                      return ValidateModelResponse(valid=False, message=f"Gemini API Error: {response.status_code}")
@@ -280,9 +285,9 @@ async def validate_model(request: ValidateModelRequest):
 
 
 @router.get("/sessions", response_model=SessionListResponse)
-async def list_chat_sessions(limit: int = Query(default=50, ge=1, le=200)):
+async def list_chat_sessions(limit: int = Query(default=50, ge=1, le=200), owner_hash: str | None = Depends(browser_owner)):
     try:
-        sessions = await list_sessions(limit=limit)
+        sessions = await list_sessions(limit=limit, owner_hash=owner_hash)
         return SessionListResponse(sessions=sessions)
     except Exception as e:
         logger.exception("Error listing sessions")
@@ -290,8 +295,8 @@ async def list_chat_sessions(limit: int = Query(default=50, ge=1, le=200)):
 
 
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
-async def delete_chat_session(session_id: str):
-    session = await get_session_by_id(session_id)
+async def delete_chat_session(session_id: str, owner_hash: str | None = Depends(browser_owner)):
+    session = await get_session_by_id(session_id, owner_hash=owner_hash)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -309,8 +314,8 @@ async def delete_chat_session(session_id: str):
 
 
 @router.get("/sessions/{session_id}/messages", response_model=MessagesResponse)
-async def get_session_messages(session_id: str):
-    session = await get_session_by_id(session_id)
+async def get_session_messages(session_id: str, owner_hash: str | None = Depends(browser_owner)):
+    session = await get_session_by_id(session_id, owner_hash=owner_hash)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -345,8 +350,8 @@ async def get_session_messages(session_id: str):
     "/sessions/{session_id}/messages/{message_id}",
     response_model=UpdateMessageResponse,
 )
-async def update_message(session_id: str, message_id: int, request: UpdateMessageRequest):
-    session = await get_session_by_id(session_id)
+async def update_message(session_id: str, message_id: int, request: UpdateMessageRequest, owner_hash: str | None = Depends(browser_owner)):
+    session = await get_session_by_id(session_id, owner_hash=owner_hash)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -375,11 +380,14 @@ async def fetch_content(request: FetchContentRequest):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    session = await get_session_by_id(request.session_id)
+async def chat(request: ChatRequest, owner_hash: str | None = Depends(browser_owner)):
+    session = await get_session_by_id(request.session_id, owner_hash=owner_hash)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    require_visitor_credentials(request)
+    if owner_hash and request.request_id:
+        request.request_id = f"{owner_hash}:{request.request_id}"
     cancel_manager = get_chat_cancellation_manager()
     cancel_event = None
     if request.request_id:
@@ -518,11 +526,14 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
-    session = await get_session_by_id(request.session_id)
+async def chat_stream(request: ChatRequest, owner_hash: str | None = Depends(browser_owner)):
+    session = await get_session_by_id(request.session_id, owner_hash=owner_hash)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    require_visitor_credentials(request)
+    if owner_hash and request.request_id:
+        request.request_id = f"{owner_hash}:{request.request_id}"
     async def event_generator():
         cancel_manager = get_chat_cancellation_manager()
         cancel_event = None
@@ -710,9 +721,10 @@ async def chat_stream(request: ChatRequest):
 
 
 @router.post("/chat/stop", response_model=StopChatResponse)
-async def stop_chat(request: StopChatRequest):
+async def stop_chat(request: StopChatRequest, owner_hash: str | None = Depends(browser_owner)):
     cancel_manager = get_chat_cancellation_manager()
-    stopped = await cancel_manager.cancel(request.request_id)
+    cancel_id = f"{owner_hash}:{request.request_id}" if owner_hash else request.request_id
+    stopped = await cancel_manager.cancel(cancel_id)
     return StopChatResponse(request_id=request.request_id, stopped=stopped)
 
 

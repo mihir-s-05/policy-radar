@@ -67,7 +67,7 @@ export type ModelProvider = "openai" | "openai_oauth" | "anthropic" | "gemini" |
 
 export type ApiMode = "responses" | "chat_completions";
 
-export type EmbeddingProvider = "local" | "openai" | "huggingface";
+export type EmbeddingProvider = "local" | "cloudflare" | "openai" | "huggingface";
 
 export interface CustomModelConfig {
   base_url: string;
@@ -112,6 +112,8 @@ export interface MessageItem {
   content: string;
   created_at: string;
   sources?: SourceItem[] | null;
+  steps?: Step[];
+  model?: string;
 }
 
 export interface MessagesResponse {
@@ -146,7 +148,7 @@ export interface ProviderInfo {
   base_url: string;
   models: string[];
   api_key_detected: boolean;
-  api_mode: ApiMode;
+  api_mode: ApiMode | "native";
 }
 
 export interface EmbeddingProviderInfo {
@@ -158,6 +160,8 @@ export interface EmbeddingProviderInfo {
 }
 
 export interface ConfigResponse {
+  execution_mode?: "browser";
+  public_mode: boolean;
   model: string;
   available_models: string[];
   default_api_mode: ApiMode;

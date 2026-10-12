@@ -8,6 +8,7 @@ import { FoxingOverlay } from "./components/FoxingOverlay";
 import type { Message, SourceSelection, SourceItem, ProviderInfo, EmbeddingProviderInfo, EmbeddingProvider } from "./types";
 import { PanelLeft, PanelRightClose } from "lucide-react";
 import { Button } from "./components/ui/Button";
+import { DEFAULT_MODELS } from "./lib/modelCatalog";
 
 const LEFT_SIDEBAR_MIN = 200;
 const LEFT_SIDEBAR_MAX = 450;
@@ -46,11 +47,12 @@ function App() {
 
   const [sources, setSources] = useState<SourceSelection>(loadSourcesFromStorage());
   const [days, setDays] = useState(30);
-  const [model, setModel] = useState("gpt-5.2");
-  const [availableModels, setAvailableModels] = useState<string[]>(["gpt-5.2", "gpt-5-mini", "gpt-5.1", "o3"]);
+  const [model, setModel] = useState(DEFAULT_MODELS.openai[0]);
+  const [availableModels, setAvailableModels] = useState<string[]>(DEFAULT_MODELS.openai);
+  const [publicMode, setPublicMode] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(LEFT_SIDEBAR_DEFAULT);
   const [rightSidebarWidth, setRightSidebarWidth] = useState(RIGHT_SIDEBAR_DEFAULT);
@@ -74,15 +76,17 @@ function App() {
   useEffect(() => {
     getConfig()
       .then((config) => {
+        setPublicMode(config.public_mode);
         setAvailableModels(config.available_models);
         setModel(config.model);
         setUserSettings((prev) => ({
           ...prev,
+          hostedEmbeddingsInitialized: config.execution_mode === "browser" || prev.hostedEmbeddingsInitialized,
           model: prev.model || config.model,
           embedding: {
             ...prev.embedding,
-            provider: prev.embedding?.provider || (config.embedding_provider as EmbeddingProvider),
-            model: prev.embedding?.model || config.embedding_model,
+            provider: config.execution_mode === "browser" && (!prev.hostedEmbeddingsInitialized || !["local", "cloudflare"].includes(prev.embedding.provider)) ? "cloudflare" : prev.embedding?.provider || (config.embedding_provider as EmbeddingProvider),
+            model: config.execution_mode === "browser" && !prev.hostedEmbeddingsInitialized ? config.embedding_model : prev.embedding?.model || config.embedding_model,
           },
         }));
         if (config.providers) {
@@ -149,6 +153,7 @@ function App() {
 
   const combinedEmbeddingModels = useMemo(() => {
     const provider = userSettings.embedding?.provider || "local";
+    if (embeddingProviders.cloudflare) return embeddingProviders[provider]?.models || [];
     const providerModels = userSettings.embedding?.providerModels
       ? userSettings.embedding.providerModels[provider as keyof typeof userSettings.embedding.providerModels]
       : undefined;
@@ -236,6 +241,8 @@ function App() {
         content: item.content,
         created_at: item.created_at,
         sources: item.sources || undefined,
+        steps: item.steps,
+        model: item.model,
       }));
 
       const aggregatedSources = aggregateSources(historyMessages);
@@ -575,7 +582,7 @@ function App() {
       <FoxingOverlay />
       <main
         ref={mainRef}
-        className="sidebar-resizable-grid grid flex-1 overflow-hidden p-4"
+        className="sidebar-resizable-grid relative grid min-h-0 flex-1 overflow-hidden p-4"
         style={{
           "--left-sidebar-width": `${actualLeftWidth}px`,
           "--right-sidebar-width": `${actualRightWidth}px`,
@@ -600,7 +607,7 @@ function App() {
         >
           <div className="resize-handle-bar h-12 w-1 rounded-full bg-sepia-light/30 transition-all group-hover:h-24 group-hover:bg-sepia-brown/50 group-active:h-24 group-active:bg-sepia-brown/50" />
         </div>
-        <div className="relative flex flex-col overflow-hidden rounded-xl border border-sepia-light/40 parchment-bg shadow-document">
+        <div className="research-pane relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-sepia-light/40 parchment-bg shadow-document">
           <MessageList
             messages={messages}
             isLoading={historyLoading}
@@ -652,6 +659,7 @@ function App() {
             }
             settingsModal={
               <SettingsModal
+                publicMode={publicMode}
                 settings={userSettings}
                 onSettingsChange={setUserSettings}
                 providers={providers}

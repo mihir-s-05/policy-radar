@@ -70,6 +70,12 @@ async def init_db() -> None:
             """
         )
 
+        async with conn.execute("PRAGMA table_info(sessions)") as cursor:
+            columns = [row["name"] for row in await cursor.fetchall()]
+        if "owner_hash" not in columns:
+            await conn.execute("ALTER TABLE sessions ADD COLUMN owner_hash TEXT")
+        await conn.execute("CREATE INDEX IF NOT EXISTS sessions_owner ON sessions(owner_hash)")
+
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sources (
@@ -85,24 +91,25 @@ async def init_db() -> None:
         )
 
 
-async def create_session() -> str:
+async def create_session(owner_hash: Optional[str] = None) -> str:
     session_id = str(uuid.uuid4())
     created_at = _utc_now_iso()
 
     async with db_session() as conn:
         await conn.execute(
-            "INSERT INTO sessions (session_id, previous_response_id, created_at) VALUES (?, ?, ?)",
-            (session_id, None, created_at),
+            "INSERT INTO sessions (session_id, previous_response_id, created_at, owner_hash) VALUES (?, ?, ?, ?)",
+            (session_id, None, created_at, owner_hash),
         )
 
     return session_id
 
 
-async def get_session_by_id(session_id: str) -> Optional[dict]:
+async def get_session_by_id(session_id: str, owner_hash: Optional[str] = None) -> Optional[dict]:
     async with db_session() as conn:
         async with conn.execute(
-            "SELECT session_id, previous_response_id, created_at FROM sessions WHERE session_id = ?",
-            (session_id,),
+            "SELECT session_id, previous_response_id, created_at FROM sessions WHERE session_id = ?"
+            + (" AND owner_hash = ?" if owner_hash is not None else ""),
+            (session_id, owner_hash) if owner_hash is not None else (session_id,),
         ) as cursor:
             row = await cursor.fetchone()
 
@@ -181,7 +188,7 @@ async def update_message_content(session_id: str, message_id: int, content: str)
         return cursor.rowcount > 0
 
 
-async def list_sessions(limit: int = 50) -> list[dict]:
+async def list_sessions(limit: int = 50, owner_hash: Optional[str] = None) -> list[dict]:
     async with db_session() as conn:
         async with conn.execute(
             """
@@ -210,10 +217,11 @@ async def list_sessions(limit: int = 50) -> list[dict]:
                     LIMIT 1
                 ) AS title
             FROM sessions s
+            WHERE (? IS NULL OR s.owner_hash = ?)
             ORDER BY COALESCE(last_message_at, s.created_at) DESC
             LIMIT ?
             """,
-            (limit,),
+            (owner_hash, owner_hash, limit),
         ) as cursor:
             rows = await cursor.fetchall()
 

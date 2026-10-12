@@ -51,7 +51,7 @@ class GeminiService:
             raise ValueError("Google API key is required for Gemini service")
 
         self.client = genai.Client(api_key=effective_api_key)
-        self.model = settings.gemini_models[0] if settings.gemini_models else "gemini-2.0-flash"
+        self.model = settings.gemini_models[0] if settings.gemini_models else "gemini-3.8-flash"
         self.tool_executor = ToolExecutor(
             session_id=session_id,
             embedding_config=embedding_config,

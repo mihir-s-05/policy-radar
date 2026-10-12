@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Policy Radar embedding comparison</title>
+<style>body{font:16px system-ui;max-width:1150px;margin:36px auto;padding:0 20px;color:#222;background:#faf9f5}button{font:inherit;padding:10px 16px;margin-right:12px;cursor:pointer}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:10px;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px monospace;background:#fff;padding:18px}#status{min-height:24px}a{color:#704829}</style></head>
+<body><h1>Embedding comparison</h1><p>Both models receive the same 48 short policy passages and six paraphrased search queries. This is a functional smoke test, not a large retrieval-quality benchmark. Times include the current browser and network. First-use local timing includes runtime/model initialization; browser caches may already be populated.</p>
+<p><button id="local">Test local embeddings</button><button id="both">Compare both providers</button><button id="download" disabled>Download results</button> <a href="/">Return to Policy Radar</a></p>
+<p id="status" role="status">Ready.</p><div id="results"></div><pre id="details"></pre>
+<p><label for="document-url">Government PDF or page: </label><input id="document-url" type="url" style="width:65%;padding:8px" value="https://www.govinfo.gov/content/pkg/FR-2026-10-13/pdf/2026-20972.pdf"></p><p><button id="document-test">Test browser document reader</button></p><pre id="document-result"></pre>
+<script type="module" src="/src/benchmark.ts"></script></body></html>

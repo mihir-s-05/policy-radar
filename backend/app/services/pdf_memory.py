@@ -54,7 +54,6 @@ class PdfMemoryStore:
         )
         self._collection_base = self.settings.rag_collection
         self._collections: dict[str, object] = {}
-        self._openai = OpenAI(api_key=self.settings.openai_api_key)
         self._openai_clients: dict[tuple[str, str], OpenAI] = {}
         self._local_models: dict[str, object] = {}
         self._local_model_lock = asyncio.Lock()
@@ -162,6 +161,9 @@ class PdfMemoryStore:
             api_key = api_key or self.settings.huggingface_api_key
             base_url = base_url or self.settings.huggingface_base_url
 
+        if self.settings.public_mode and provider != "local" and not api_key:
+            raise ValueError("Your own embedding API key is required.")
+
         return EmbeddingConfig(
             provider=provider,
             model=model,
@@ -171,14 +173,15 @@ class PdfMemoryStore:
 
     def _get_openai_client(self, api_key: str, base_url: Optional[str]) -> OpenAI:
         key = (api_key or "", base_url or "")
-        existing = self._openai_clients.get(key)
+        existing = None if self.settings.public_mode else self._openai_clients.get(key)
         if existing:
             return existing
         if base_url:
             client = OpenAI(api_key=api_key, base_url=base_url)
         else:
             client = OpenAI(api_key=api_key)
-        self._openai_clients[key] = client
+        if not self.settings.public_mode:
+            self._openai_clients[key] = client
         return client
 
     def _embed_openai_sync(

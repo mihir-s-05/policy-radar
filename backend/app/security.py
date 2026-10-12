@@ -1,10 +1,44 @@
 import asyncio
 import time
+import hashlib
+import re
 from typing import Optional
 
 from fastapi import HTTPException, Request
 
 from .config import get_settings
+
+
+async def browser_owner(request: Request) -> Optional[str]:
+    """A browser-held capability scopes anonymous hosted sessions, not provider billing."""
+    if not get_settings().public_mode:
+        return None
+    token = request.headers.get("x-session-token", "")
+    if not re.fullmatch(r"[a-f0-9]{64}", token):
+        raise HTTPException(status_code=401, detail="A browser session token is required.")
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def require_visitor_credentials(request) -> None:
+    if not get_settings().public_mode:
+        return
+    if request.provider not in {None, "openai", "anthropic", "gemini"}:
+        raise HTTPException(status_code=400, detail="Choose OpenAI, Anthropic, or Gemini and enter your own API key.")
+    if not request.api_key or not request.api_key.strip():
+        raise HTTPException(status_code=400, detail="Enter your own provider API key in Configuration before sending an inquiry.")
+    request.api_key = request.api_key.strip()
+    embedding = getattr(request, "embedding_config", None)
+    if embedding:
+        if embedding.provider != "local" and (not embedding.api_key or not embedding.api_key.strip()):
+            raise HTTPException(status_code=400, detail="Enter your own embedding API key, or choose Local embeddings.")
+        # Hosted requests cannot direct secret-bearing calls to arbitrary URLs.
+        if embedding.base_url:
+            raise HTTPException(status_code=400, detail="Custom embedding endpoints are available only in local mode.")
+
+
+async def local_oauth_only() -> None:
+    if get_settings().public_mode:
+        raise HTTPException(status_code=403, detail="Shared OAuth is disabled on the hosted app. Use your own API key.")
 
 
 def _extract_bearer_token(auth_header: Optional[str]) -> Optional[str]:

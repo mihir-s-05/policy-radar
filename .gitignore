@@ -17,6 +17,11 @@ ENV/
 .env
 .env.local
 .env.*.local
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
+frontend/public/models/
 
 # Database
 *.db

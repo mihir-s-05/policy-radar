@@ -12,7 +12,7 @@ Provides endpoints for:
 import time
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -24,10 +24,11 @@ from ..services.openai_oauth import (
     get_pending_flow,
     OAuthTokens,
 )
+from ..security import local_oauth_only
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/oauth")
+router = APIRouter(prefix="/api/oauth", dependencies=[Depends(local_oauth_only)])
 
 # In-memory token storage (in production, use a database or secure storage)
 _oauth_tokens: dict[str, OAuthTokens] = {}

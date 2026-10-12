@@ -5,6 +5,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogTrigger,
 } from "./ui/Dialog";
 import {
@@ -36,11 +37,11 @@ export function EmbeddingModelModal({
         <Button
           variant="outline"
           size="sm"
-          className="h-8 btn-parchment border-sepia-light/50 text-xs"
+          className="embedding-control h-8 min-w-0 btn-parchment border-sepia-light/50 text-xs"
           disabled={disabled}
         >
-          <Database className="mr-1 h-3.5 w-3.5" />
-          <span style={{ fontFamily: "'Spectral', serif" }}>
+          <Database className="mr-1 h-3.5 w-3.5 shrink-0" />
+          <span className="truncate" style={{ fontFamily: "'Spectral', serif" }}>
             Embeddings: {model || "Select"}
           </span>
         </Button>
@@ -53,6 +54,7 @@ export function EmbeddingModelModal({
           >
             Embedding Model
           </DialogTitle>
+          <DialogDescription className="sr-only">Select the model used to search PDF content.</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">

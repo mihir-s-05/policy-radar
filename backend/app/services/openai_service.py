@@ -520,6 +520,8 @@ class OpenAIService:
     ):
         settings = get_settings()
         effective_api_key = api_key or settings.openai_api_key
+        if settings.public_mode and not effective_api_key:
+            raise ValueError("Your own provider API key is required.")
         try:
             if base_url:
                 self.client = AsyncOpenAI(api_key=effective_api_key, base_url=base_url)

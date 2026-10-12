@@ -153,7 +153,7 @@ export function ChatInput({
   };
 
   return (
-    <div className="flex flex-col gap-4 border-t border-sepia-light/30 bg-card p-4">
+    <div className="research-composer flex shrink-0 flex-col gap-4 border-t border-sepia-light/30 bg-card p-4">
       <div className="parchment-bg aged-edge flex flex-col gap-4 rounded-lg p-3">
         <form
           onSubmit={handleSubmit}
@@ -184,7 +184,7 @@ export function ChatInput({
           </Button>
         </form>
 
-        <div className="flex items-center gap-4 px-3 pb-2">
+        <div className="research-controls flex flex-wrap items-center gap-4 px-3 pb-2">
           <div className="flex items-center gap-2">
             <span
               className="text-[10px] font-semibold uppercase tracking-wider ink-faded"

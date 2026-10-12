@@ -24,31 +24,55 @@ import type {
   OAuthLogoutResponse,
 } from "../types";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
+const BROWSER_TOKEN_KEY = "policy-radar-browser-token";
+let browserToken: string | undefined;
+let browserExecution = false;
+export const isBrowserExecution = () => browserExecution;
+export const apiTransport = (path: string, options?: RequestInit) => apiFetch(`${API_BASE}${path}`, options);
+
+function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  if (!browserToken) {
+    try {
+      const stored = localStorage.getItem(BROWSER_TOKEN_KEY);
+      if (stored && /^[a-f0-9]{64}$/.test(stored)) browserToken = stored;
+    } catch { /* Keep this browser capability in memory if storage is unavailable. */ }
+    if (!browserToken) {
+      browserToken = Array.from(crypto.getRandomValues(new Uint8Array(32)),
+        byte => byte.toString(16).padStart(2, "0")).join("");
+      try { localStorage.setItem(BROWSER_TOKEN_KEY, browserToken); } catch { /* In-memory fallback. */ }
+    }
+  }
+  const headers = new Headers(options.headers);
+  headers.set("X-Session-Token", browserToken);
+  return fetch(url, { ...options, headers });
+}
 
 export async function createSession(): Promise<SessionResponse> {
-  const response = await fetch(`${API_BASE}/api/session`, {
+  const response = await apiFetch(`${API_BASE}/api/session`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
   });
 
+  if (!response.ok) throw new Error(`Failed to create session: ${response.statusText}`);
   return response.json();
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+  const response = await apiFetch(`${API_BASE}/api/sessions/${sessionId}`, {
     method: "DELETE",
   });
 
   if (!response.ok) {
     throw new Error(`Failed to delete session: ${response.statusText}`);
   }
+  if (browserExecution) await (await import("../lib/browserEmbeddings")).deleteDocumentIndex(sessionId);
 }
 
 export async function getConfig(): Promise<ConfigResponse> {
-  const response = await fetch(`${API_BASE}/api/config`, {
+  const response = await apiFetch(`${API_BASE}/api/config`, {
     method: "GET",
   });
 
@@ -56,11 +80,13 @@ export async function getConfig(): Promise<ConfigResponse> {
     throw new Error(`Failed to load config: ${response.statusText}`);
   }
 
-  return response.json();
+  const config = await response.json() as ConfigResponse;
+  browserExecution = config.execution_mode === "browser";
+  return config;
 }
 
 export async function listSessions(): Promise<SessionListResponse> {
-  const response = await fetch(`${API_BASE}/api/sessions`, {
+  const response = await apiFetch(`${API_BASE}/api/sessions`, {
     method: "GET",
   });
 
@@ -74,7 +100,7 @@ export async function listSessions(): Promise<SessionListResponse> {
 export async function getSessionMessages(
   sessionId: string
 ): Promise<MessagesResponse> {
-  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/messages`, {
+  const response = await apiFetch(`${API_BASE}/api/sessions/${sessionId}/messages`, {
     method: "GET",
   });
 
@@ -89,7 +115,11 @@ export async function getSessionMessages(
 export async function fetchContent(
   request: FetchContentRequest
 ): Promise<FetchContentResponse> {
-  const response = await fetch(`${API_BASE}/api/content/fetch`, {
+  if (browserExecution) {
+    const document = await (await import("./browserDocuments")).readDocument(request.url, apiTransport, undefined, request.max_length || 500_000);
+    return { url: request.url, title: document.title, full_text: document.full_text };
+  }
+  const response = await apiFetch(`${API_BASE}/api/content/fetch`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -110,7 +140,7 @@ export async function updateMessage(
   messageId: number,
   request: UpdateMessageRequest
 ): Promise<UpdateMessageResponse> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/sessions/${sessionId}/messages/${messageId}`,
     {
       method: "PATCH",
@@ -130,7 +160,8 @@ export async function updateMessage(
 }
 
 export async function chat(request: ChatRequest): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE}/api/chat`, {
+  if (browserExecution) return (await import("./browserChat")).browserChatOnce(request, apiTransport);
+  const response = await apiFetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -149,7 +180,7 @@ export async function chat(request: ChatRequest): Promise<ChatResponse> {
 export async function validateModel(
   request: ValidateModelRequest
 ): Promise<ValidateModelResponse> {
-  const response = await fetch(`${API_BASE}/api/validate-model`, {
+  const response = await apiFetch(`${API_BASE}/api/validate-model`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -166,7 +197,7 @@ export async function validateModel(
 }
 
 export async function stopChat(request_id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/chat/stop`, {
+  const response = await apiFetch(`${API_BASE}/api/chat/stop`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -191,7 +222,11 @@ export async function* chatStream(
   request: ChatRequest,
   signal?: AbortSignal
 ): AsyncGenerator<SSEEvent, void, unknown> {
-  const response = await fetch(`${API_BASE}/api/chat/stream`, {
+  if (browserExecution) {
+    yield* (await import("./browserChat")).browserChat(request, apiTransport, signal);
+    return;
+  }
+  const response = await apiFetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -267,7 +302,7 @@ export async function* chatStream(
 // OAuth API Functions
 
 export async function startOAuthFlow(): Promise<OAuthStartResponse> {
-  const response = await fetch(`${API_BASE}/api/oauth/openai/start`, {
+  const response = await apiFetch(`${API_BASE}/api/oauth/openai/start`, {
     method: "GET",
   });
 
@@ -280,7 +315,7 @@ export async function startOAuthFlow(): Promise<OAuthStartResponse> {
 }
 
 export async function getOAuthStatus(): Promise<OAuthTokenResponse> {
-  const response = await fetch(`${API_BASE}/api/oauth/openai/status`, {
+  const response = await apiFetch(`${API_BASE}/api/oauth/openai/status`, {
     method: "GET",
   });
 
@@ -295,7 +330,7 @@ export async function getOAuthStatus(): Promise<OAuthTokenResponse> {
 export async function submitOAuthCallback(
   request: OAuthCallbackRequest
 ): Promise<OAuthCallbackResponse> {
-  const response = await fetch(`${API_BASE}/api/oauth/openai/callback`, {
+  const response = await apiFetch(`${API_BASE}/api/oauth/openai/callback`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -312,7 +347,7 @@ export async function submitOAuthCallback(
 }
 
 export async function refreshOAuthToken(): Promise<OAuthRefreshResponse> {
-  const response = await fetch(`${API_BASE}/api/oauth/openai/refresh`, {
+  const response = await apiFetch(`${API_BASE}/api/oauth/openai/refresh`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -328,7 +363,7 @@ export async function refreshOAuthToken(): Promise<OAuthRefreshResponse> {
 }
 
 export async function logoutOAuth(): Promise<OAuthLogoutResponse> {
-  const response = await fetch(`${API_BASE}/api/oauth/openai/logout`, {
+  const response = await apiFetch(`${API_BASE}/api/oauth/openai/logout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

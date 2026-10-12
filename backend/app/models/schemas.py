@@ -147,7 +147,7 @@ class ProviderInfo(BaseModel):
     base_url: str
     models: list[str] = Field(default_factory=list)
     api_key_detected: bool = False
-    api_mode: Literal["responses", "chat_completions"] = "chat_completions"
+    api_mode: Literal["responses", "chat_completions", "native"] = "chat_completions"
 
 
 class EmbeddingProviderInfo(BaseModel):
@@ -159,6 +159,7 @@ class EmbeddingProviderInfo(BaseModel):
 
 
 class ConfigResponse(BaseModel):
+    public_mode: bool = False
     model: str
     available_models: list[str] = Field(default_factory=list)
     default_api_mode: Literal["responses", "chat_completions"] = "responses"

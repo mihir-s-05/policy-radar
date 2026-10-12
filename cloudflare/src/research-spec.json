@@ -1,0 +1,485 @@
+{
+  "SYSTEM_INSTRUCTIONS": "You are a neutral policy research assistant specializing in U.S. federal regulatory activity.\n\nCRITICAL RULES:\n1. Always use the available tools to search for up-to-date information. Never guess or make up information about regulations or federal activity.\n2. Provide citations as links for every factual claim. Include at least one source per factual paragraph.\n3. Do not provide legal advice. Always include this disclaimer at the end: \"Note: This is not legal advice. Please verify information with official sources.\"\n4. Be non-partisan and objective. Present information neutrally without political bias.\n5. Keep responses readable and well-organized. Use bullet points or numbered lists for multiple items.\n\nWhen searching:\n- Prefer domain-specific tools when relevant; do not default to just Regulations.gov / GovInfo.\n- Use regs_search_documents / regs_search_dockets for rulemaking, proposed/final rules, dockets, and comments.\n- Use govinfo_search for official publications (incl. Federal Register) and broad gov publications.\n- Use federal_register_search specifically for Federal Register items (rules, proposed rules, notices, presidential documents).\n- Use congress_search_bills / congress_search_votes for legislation and roll call votes.\n- Use usaspending_search for contracts, grants, awards, recipients, and funding flows.\n- Use fiscal_data_query for Treasury Fiscal Data (debt, receipts, outlays, interest rates).\n- Use datagov_search for datasets on data.gov and open data catalogs.\n- Use doj_search for DOJ press releases and news.\n- Use searchgov_search for broad search across government websites (when configured).\n- Respect the user's time window by setting the 'days' parameter on any tool that supports it (when applicable).\n\nREADING FULL DOCUMENT CONTENT:\n- After finding documents, use regs_read_document_content or govinfo_read_package_content to read the full text\n- This allows you to understand and summarize the actual content, not just metadata\n- Read the full content when the user asks for details, summaries, or analysis of specific documents\n- Use fetch_url_content as a fallback for any government URL\n- Some tools may include extracted PDF images as separate inputs. Use them when relevant.\n- Use search_pdf_memory to retrieve previously indexed PDF content for this session when needed.\n\nFormat your response clearly with:\n- A summary of what you found\n- Key details organized logically\n- Direct links to sources\n- The required disclaimer at the end",
+  "SOURCE_DISPLAY_NAMES": {
+    "regulations": "Regulations.gov",
+    "govinfo": "GovInfo",
+    "congress": "Congress.gov",
+    "federal_register": "Federal Register",
+    "usaspending": "USAspending.gov",
+    "fiscal_data": "Treasury Fiscal Data",
+    "datagov": "data.gov",
+    "doj": "DOJ",
+    "searchgov": "Search.gov"
+  },
+  "TOOL_TO_SOURCE": {
+    "regs_search_documents": "regulations",
+    "regs_search_dockets": "regulations",
+    "regs_get_document": "regulations",
+    "regs_read_document_content": "regulations",
+    "govinfo_search": "govinfo",
+    "govinfo_package_summary": "govinfo",
+    "govinfo_read_package_content": "govinfo",
+    "congress_search_bills": "congress",
+    "congress_search_votes": "congress",
+    "federal_register_search": "federal_register",
+    "usaspending_search": "usaspending",
+    "fiscal_data_query": "fiscal_data",
+    "datagov_search": "datagov",
+    "doj_search": "doj",
+    "searchgov_search": "searchgov",
+    "fetch_url_content": null,
+    "search_pdf_memory": null
+  },
+  "TOOLS": [
+    {
+      "type": "function",
+      "name": "regs_search_documents",
+      "description": "Search for regulatory documents on Regulations.gov including proposed rules, final rules, notices, and other documents. Returns the most recent documents matching the search criteria.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "search_term": {
+            "type": "string",
+            "description": "Search keywords for finding documents (e.g., 'asylum', 'water quality', 'immigration')"
+          },
+          "days": {
+            "type": "integer",
+            "description": "Number of days to look back from today (e.g., 30, 60, 90)",
+            "default": 30
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of results to return (max 25)",
+            "default": 10
+          }
+        },
+        "required": [
+          "search_term"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "regs_search_dockets",
+      "description": "Search for dockets (rulemaking proceedings) on Regulations.gov. Dockets contain the full record of a rulemaking including all related documents and public comments.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "search_term": {
+            "type": "string",
+            "description": "Search keywords for finding dockets"
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of results to return",
+            "default": 10
+          }
+        },
+        "required": [
+          "search_term"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "regs_get_document",
+      "description": "Get detailed information about a specific document from Regulations.gov by its document ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "The Regulations.gov document ID (e.g., 'EPA-HQ-OW-2024-0001-0001')"
+          },
+          "include_attachments": {
+            "type": "boolean",
+            "description": "Whether to include attachment information",
+            "default": false
+          }
+        },
+        "required": [
+          "document_id"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "govinfo_search",
+      "description": "Search GovInfo for Federal Register content and other official government publications. Supports keywords, collection filters, and time windows.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keywords": {
+            "type": "string",
+            "description": "Search keywords (e.g., 'immigration', 'water quality'). Use concise topic terms."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Optional collection code filter (e.g., 'FR' for Federal Register)."
+          },
+          "days": {
+            "type": "integer",
+            "description": "Number of days to look back from today (e.g., 30, 60, 90).",
+            "default": 30
+          },
+          "query": {
+            "type": "string",
+            "description": "Advanced query override (e.g., 'collection:FR AND immigration AND publishdate:range(2024-01-01,)'). Use only when needed."
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of results to return",
+            "default": 10
+          }
+        },
+        "required": [
+          "keywords"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "govinfo_package_summary",
+      "description": "Get detailed summary information about a specific GovInfo package by its package ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "description": "The GovInfo package ID"
+          }
+        },
+        "required": [
+          "package_id"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "regs_read_document_content",
+      "description": "Read and extract the full text content of a Regulations.gov document. Use this after searching to get the complete document text for analysis and summarization.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "The Regulations.gov document ID to read (e.g., 'EPA-HQ-OW-2024-0001-0001')"
+          }
+        },
+        "required": [
+          "document_id"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "govinfo_read_package_content",
+      "description": "Read and extract the full text content of a GovInfo package (Federal Register entry, bill, etc.). Use this after searching to get the complete document text for analysis and summarization.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "description": "The GovInfo package ID to read"
+          }
+        },
+        "required": [
+          "package_id"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "fetch_url_content",
+      "description": "Fetch and extract text content from any government URL. Use this as a fallback when you have a URL but need to read its content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to fetch content from (should be a .gov or official government URL)"
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "Optional maximum length of text to return. Increase for longer documents.",
+            "default": 15000
+          },
+          "full_text": {
+            "type": "boolean",
+            "description": "Set true to return the full extracted text without truncation.",
+            "default": false
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "search_pdf_memory",
+      "description": "Search indexed PDF content stored in memory for this session. Use this to recall details from PDFs already processed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query for the PDF memory."
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Number of matches to return.",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "congress_search_bills",
+      "description": "Search Congress.gov for bills and legislation. Returns bill titles, numbers, sponsors, and status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keywords for bills (e.g., 'immigration reform', 'tax credit')"
+          },
+          "congress": {
+            "type": "integer",
+            "description": "Congress number (e.g., 118 for 118th Congress). Defaults to current."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "congress_search_votes",
+      "description": "Search Congress.gov for roll call votes. Returns vote results and which members voted yea/nay.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "chamber": {
+            "type": "string",
+            "description": "Congressional chamber: 'house' or 'senate'",
+            "enum": [
+              "house",
+              "senate"
+            ],
+            "default": "house"
+          },
+          "congress": {
+            "type": "integer",
+            "description": "Congress number (defaults to 118)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 10
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "type": "function",
+      "name": "federal_register_search",
+      "description": "Search the Federal Register for rules, proposed rules, notices, and presidential documents. No API key required.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keywords"
+          },
+          "document_type": {
+            "type": "string",
+            "description": "Filter by type: RULE, PRORULE (proposed rule), NOTICE, or PRESDOCU (presidential)",
+            "enum": [
+              "RULE",
+              "PRORULE",
+              "NOTICE",
+              "PRESDOCU"
+            ]
+          },
+          "days": {
+            "type": "integer",
+            "description": "Number of days to look back",
+            "default": 30
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "usaspending_search",
+      "description": "Search USAspending.gov for federal spending, contracts, grants, and awards. Returns a markdown summary suitable for analysis.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Search keywords (e.g., ['defense', 'aircraft'])"
+          },
+          "agency": {
+            "type": "string",
+            "description": "Filter by awarding agency name"
+          },
+          "award_type": {
+            "type": "string",
+            "description": "Type of award: 'contracts', 'grants', 'loans', or 'direct_payments'",
+            "enum": [
+              "contracts",
+              "grants",
+              "loans",
+              "direct_payments"
+            ]
+          },
+          "days": {
+            "type": "integer",
+            "description": "Number of days to look back",
+            "default": 365
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 10
+          }
+        },
+        "required": [
+          "award_type"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "fiscal_data_query",
+      "description": "Query Treasury Fiscal Data API for debt, interest rates, receipts, and outlays. Returns a markdown summary.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dataset": {
+            "type": "string",
+            "description": "Dataset to query",
+            "enum": [
+              "debt_to_penny",
+              "interest_rates",
+              "monthly_receipts",
+              "monthly_outlays"
+            ],
+            "default": "debt_to_penny"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of records",
+            "default": 10
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "type": "function",
+      "name": "datagov_search",
+      "description": "Search data.gov for government datasets. Returns dataset titles, descriptions, and resource links.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keywords (e.g., 'climate data', 'census')"
+          },
+          "organization": {
+            "type": "string",
+            "description": "Filter by organization/agency"
+          },
+          "format": {
+            "type": "string",
+            "description": "Filter by resource format (CSV, JSON, PDF, etc.)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "type": "function",
+      "name": "doj_search",
+      "description": "Search Department of Justice press releases and news.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keywords"
+          },
+          "component": {
+            "type": "string",
+            "description": "DOJ component (e.g., 'fbi', 'dea', 'civil-rights')"
+          },
+          "days": {
+            "type": "integer",
+            "description": "Number of days to look back",
+            "default": 30
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 10
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "type": "function",
+      "name": "searchgov_search",
+      "description": "Search across government websites using Search.gov. Only available if configured with SEARCHGOV_AFFILIATE and SEARCHGOV_ACCESS_KEY.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keywords"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  ]
+}

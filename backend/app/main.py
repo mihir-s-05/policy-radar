@@ -24,9 +24,14 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Policy Radar Chatbot API...")
 
     settings = get_settings()
+    if settings.public_mode:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
     if not settings.gov_api_key:
         logger.warning("GOV_API_KEY environment variable is not set. Some sources will be unavailable.")
-    if not settings.openai_api_key:
+    if settings.public_mode:
+        logger.info("Hosted mode: visitors must supply their own provider keys.")
+    elif not settings.openai_api_key:
         logger.warning("OPENAI_API_KEY environment variable is not set. OpenAI provider will be unavailable.")
 
     await init_db()
@@ -52,12 +57,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=get_settings().cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
