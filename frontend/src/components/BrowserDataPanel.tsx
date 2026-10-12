@@ -35,9 +35,9 @@ export function BrowserDataPanel() {
     setImported(sessions.map(row=>row.session_id));setExported(false);
     return `Imported ${sessions.length} conversations. Server copies remain intact. Export a backup before deleting them.`;
   }
-  return <section className="flex flex-col gap-4 text-sm ink-text" style={{fontFamily:"'Spectral', serif"}}>
-    <p>Conversations, citations, work logs, documents, and vectors are saved on this browser and device. API keys stay in this tab and are excluded from backups.</p>
-    <p className="text-xs ink-faded">{counts.sessions??0} conversations · {counts.documents??0} document indexes · {counts.artifacts??0} research artifacts. Browser data can be cleared or evicted; keep an export for recovery or moving devices.</p>
+  return <section className="browser-data-panel flex flex-col gap-4 text-sm ink-text" style={{fontFamily:"'Spectral', serif"}}>
+    <p>Saved on this browser. Backups include conversations, documents and vectors; they exclude API keys.</p>
+    <p className="text-xs ink-faded">{counts.sessions??0} conversations · {counts.documents??0} document indexes · {counts.artifacts??0} research artifacts. Export to keep a copy or move devices.</p>
     <label className="flex flex-col gap-1 text-xs">Backup scope<select aria-label="Backup scope" className="btn-parchment rounded border border-sepia-light/50 p-2" value={scope} onChange={event=>setScope(event.target.value)}><option value="">All conversations</option>{sessions.map(row=><option key={row.session_id} value={row.session_id}>{row.title?.slice(0,60)||"New chat"}</option>)}</select></label>
     <div className="flex flex-wrap gap-2">
       <Button className="btn-parchment" variant="outline" size="sm" disabled={busy} onClick={()=>void run(async()=>{const backup=await exportLocalData(scope||undefined),url=URL.createObjectURL(new Blob([backup],{type:"application/json"})),link=document.createElement("a");link.href=url;link.download=`policy-radar-${new Date().toISOString().slice(0,10)}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),10_000);setExported(!scope);return "Backup downloaded. Keep it somewhere safe; it contains your saved research.";})}>Export saved data</Button>

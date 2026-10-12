@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, Check, Feather, Square } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { ChevronDown, Check, Feather, Square, SlidersHorizontal } from "lucide-react";
 import type { SourceSelection } from "../types";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
@@ -12,6 +12,7 @@ import {
 } from "./ui/Select";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/Popover";
 import { cn } from "../lib/utils";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/Dialog";
 
 interface ChatInputProps {
   onSend: (message: string, sources: SourceSelection, days: number, model: string) => void;
@@ -27,6 +28,7 @@ interface ChatInputProps {
   onModelChange: (model: string) => void;
   settingsModal?: ReactNode;
   embeddingModal?: ReactNode;
+  isMobile?: boolean;
 }
 
 const SOURCE_OPTIONS: { key: keyof SourceSelection; label: string }[] = [
@@ -113,8 +115,27 @@ export function ChatInput({
   onModelChange,
   settingsModal,
   embeddingModal,
+  isMobile = false,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const optionsFocusRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    if (!isMobile) { textarea.style.height = ""; return; }
+    const resize = () => {
+      textarea.style.height = "auto";
+      const maximum = Math.min(144, (window.visualViewport?.height || window.innerHeight) * 0.25);
+      textarea.style.height = `${Math.max(48, Math.min(textarea.scrollHeight, maximum))}px`;
+    };
+    resize();
+    window.visualViewport?.addEventListener("resize", resize);
+    return () => window.visualViewport?.removeEventListener("resize", resize);
+  }, [message, isMobile]);
 
   const enabledCount = SOURCE_OPTIONS.filter((opt) => sources[opt.key]).length;
   const archivesLabel = sources.auto
@@ -123,7 +144,7 @@ export function ChatInput({
 
   const submitMessage = () => {
     const trimmed = message.trim();
-    if (!trimmed || isLoading) return;
+    if (!trimmed || isLoading || isBusy) return;
     onSend(trimmed, sources, days, model);
     setMessage("");
   };
@@ -134,7 +155,8 @@ export function ChatInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey || (!isMobile && !e.shiftKey))) {
       e.preventDefault();
       submitMessage();
     }
@@ -153,13 +175,18 @@ export function ChatInput({
   };
 
   return (
-    <div className="research-composer flex shrink-0 flex-col gap-4 border-t border-sepia-light/30 bg-card p-4">
+    <div data-typing={isMobile && typing} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setTyping(false); }} className="research-composer flex shrink-0 flex-col gap-4 border-t border-sepia-light/30 bg-card p-4">
       <div className="parchment-bg aged-edge flex flex-col gap-4 rounded-lg p-3">
         <form
           onSubmit={handleSubmit}
           className="flex items-center gap-3 p-1 relative">
 
           <Textarea
+            ref={textareaRef}
+            id="inquiry-input"
+            aria-label="Inquiry"
+            rows={isMobile ? 1 : 2}
+            onFocus={() => setTyping(true)}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -184,7 +211,20 @@ export function ChatInput({
           </Button>
         </form>
 
-        <div className="research-controls flex flex-wrap items-center gap-4 px-3 pb-2">
+        {isMobile && <div className="mobile-composer-actions"><Button ref={optionsFocusRef} variant="ghost" type="button" disabled={isBusy} onClick={() => setOptionsOpen(true)}><SlidersHorizontal className="h-4 w-4" /><span>Research options</span><ChevronDown className="h-3 w-3" /></Button><span className="mobile-model-label" title={model}>{model}</span></div>}
+        <Dialog open={isMobile && optionsOpen} onOpenChange={setOptionsOpen}>
+          <DialogContent className="research-options-dialog parchment-bg" onCloseAutoFocus={event => { event.preventDefault(); optionsFocusRef.current?.focus(); }}>
+            <DialogHeader><DialogTitle>Research options</DialogTitle><DialogDescription className="sr-only">Choose sources, a time period, and your chat model.</DialogDescription></DialogHeader>
+            <div className="research-options-body">
+              <label className="option-label">Period<Select value={String(days)} onValueChange={value => onDaysChange(Number(value))}><SelectTrigger aria-label="Research period"><SelectValue /></SelectTrigger><SelectContent>{[7,30,60,90].map(day => <SelectItem key={day} value={String(day)}>{day} days</SelectItem>)}</SelectContent></Select></label>
+              <label className="option-label">Chat model<Select value={model} onValueChange={onModelChange}><SelectTrigger aria-label="Chat model"><SelectValue /></SelectTrigger><SelectContent>{availableModels.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></label>
+              <div className="option-label">Sources<Button variant="outline" aria-pressed={sources.auto} onClick={toggleAuto} className="justify-start gap-2 btn-parchment"><span className="source-check">{sources.auto && <Check className="h-4 w-4" />}</span>Auto-select sources</Button></div>
+              <div className="source-options-grid">{SOURCE_OPTIONS.map(option => <Button key={option.key} variant="outline" className="btn-parchment" aria-pressed={sources[option.key]} onClick={() => toggleSource(option.key)}><span className="source-check">{sources[option.key] && <Check className="h-4 w-4" />}</span>{option.label}</Button>)}</div>
+              {embeddingModal}
+            </div>
+          </DialogContent>
+        </Dialog>
+        <div className="research-controls desktop-research-controls flex flex-wrap items-center gap-4 px-3 pb-2">
           <div className="flex items-center gap-2">
             <span
               className="text-[10px] font-semibold uppercase tracking-wider ink-faded"
@@ -324,7 +364,7 @@ export function ChatInput({
         </div>
       </div>
       <p
-        className="text-center text-xs ink-faded"
+        className="composer-note text-center text-xs ink-faded"
         style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
       >
         Nota bene: This correspondence is not legal counsel. Kindly verify all information with

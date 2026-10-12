@@ -1,18 +1,12 @@
-import { useState } from "react";
+
 import { ExternalLink, Scroll } from "lucide-react";
 import type { SourceItem } from "../types";
 import { Button } from "./ui/Button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "./ui/Dialog";
 import { cn } from "../lib/utils";
 
 interface SourceCardsProps {
   sources: SourceItem[];
+  onOpenDocument: (source: SourceItem) => void;
 }
 
 function getSourceTypeLabel(type: string): string {
@@ -68,30 +62,18 @@ function isPdfSource(source: SourceItem): boolean {
   return false;
 }
 
-function getPdfUrl(source: SourceItem): string {
-  return source.pdf_url || source.url;
-}
-
 function SourceCard({
   source,
-  onViewPdf,
+  onViewDocument,
 }: {
   source: SourceItem;
-  onViewPdf: () => void;
+  onViewDocument: () => void;
 }) {
-  const isPdf = isPdfSource(source);
-
-  const handlePrimaryAction = () => {
-    if (isPdf) {
-      onViewPdf();
-    } else {
-      window.open(source.url, "_blank", "noopener,noreferrer");
-    }
-  };
+  const handlePrimaryAction = onViewDocument;
 
   return (
-    <div className="parchment-bg aged-edge flex flex-col gap-3 rounded-lg border border-sepia-light/40 p-4 shadow-parchment transition-all hover:scale-[1.01] hover:shadow-lg">
-      <div className="flex items-center justify-between">
+    <div className="source-card parchment-bg aged-edge flex min-w-0 flex-col gap-3 rounded-lg border border-sepia-light/40 p-4 shadow-parchment transition-all hover:scale-[1.01] hover:shadow-lg">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span
           className={cn(
             "rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
@@ -147,7 +129,7 @@ function SourceCard({
           onClick={handlePrimaryAction}
         >
           <span style={{ fontFamily: "'IM Fell English SC', serif" }}>
-            {isPdf ? "View Document" : "Open Link"}
+            Read document
           </span>
         </Button>
         <Button
@@ -160,7 +142,7 @@ function SourceCard({
             href={source.url}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open original URL"
+            title="Open original URL" aria-label="Open original URL"
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
@@ -170,123 +152,11 @@ function SourceCard({
   );
 }
 
-export function SourceCards({ sources }: SourceCardsProps) {
-  const [pdfState, setPdfState] = useState<{
-    isOpen: boolean;
-    pdfUrl: string;
-    title: string;
-    sourceUrl: string;
-  } | null>(null);
-
-  const sortedSources = [...sources].sort((a, b) => {
-    const aIsPdf = isPdfSource(a);
-    const bIsPdf = isPdfSource(b);
-    if (aIsPdf && !bIsPdf) return -1;
-    if (!aIsPdf && bIsPdf) return 1;
-    return 0;
-  });
-
-  const handleViewPdf = (source: SourceItem) => {
-    setPdfState({
-      isOpen: true,
-      pdfUrl: getPdfUrl(source),
-      title: source.title,
-      sourceUrl: source.url,
-    });
-  };
-
-  const handleOpenChange = (open: boolean) => {
-    if (!open) {
-      setPdfState(null);
-    }
-  };
-
-  if (sources.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <div className="mb-2 rounded-full parchment-bg p-3 border border-sepia-light/30">
-          <Scroll className="h-5 w-5 ink-faded opacity-50" />
-        </div>
-        <p
-          className="text-sm ink-faded"
-          style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
-        >
-          Referenced documents will appear here.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-sepia-light/30 bg-card px-4 py-3">
-        <h3
-          className="flex items-center gap-2 text-sm font-semibold ink-text"
-          style={{ fontFamily: "'IM Fell English SC', serif", letterSpacing: "0.05em" }}
-        >
-          Referenced Documents
-          <span
-            className="rounded-full parchment-bg px-2 py-0.5 text-[10px] ink-faded border border-sepia-light/30"
-            style={{ fontFamily: "'Spectral', serif" }}
-          >
-            {sources.length}
-          </span>
-        </h3>
-      </div>
-      <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
-        <div className="flex flex-col gap-3">
-          {sortedSources.map((source, index) => (
-            <SourceCard
-              key={`${source.id}-${index}`}
-              source={source}
-              onViewPdf={() => handleViewPdf(source)}
-            />
-          ))}
-        </div>
-      </div>
-
-      <Dialog
-        open={!!pdfState?.isOpen}
-        onOpenChange={handleOpenChange}
-      >
-        <DialogContent className="flex h-[90vh] max-w-4xl flex-col overflow-hidden p-0 sm:max-w-5xl parchment-bg border-sepia-light/50">
-          <DialogHeader className="flex-shrink-0 border-b border-sepia-light/30 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1 pr-8">
-                <DialogTitle
-                  className="line-clamp-2 text-lg ink-text"
-                  style={{ fontFamily: "'IM Fell English', serif" }}
-                >
-                  {pdfState?.title || "Document"}
-                </DialogTitle>
-                {pdfState?.sourceUrl && (
-                  <DialogDescription className="line-clamp-1 w-full max-w-md break-all">
-                    <a
-                      href={pdfState.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-sepia-brown hover:underline ink-faded"
-                      style={{ fontFamily: "'Spectral', serif", fontSize: "0.75rem" }}
-                    >
-                      {pdfState.sourceUrl}
-                    </a>
-                  </DialogDescription>
-                )}
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-hidden">
-            {pdfState?.pdfUrl && (
-              <iframe
-                src={pdfState.pdfUrl}
-                className="h-full w-full border-0"
-                title={pdfState.title || "PDF Document"}
-              />
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
+export function SourceCards({ sources, onOpenDocument }: SourceCardsProps) {
+  const sortedSources = [...sources].sort((a,b) => Number(isPdfSource(b)) - Number(isPdfSource(a)));
+  if (!sources.length) return <div className="source-empty flex flex-col items-center justify-center p-8 text-center"><Scroll className="mb-3 h-5 w-5 ink-faded" /><p className="text-sm ink-faded" style={{fontFamily:"'IM Fell English', serif",fontStyle:"italic"}}>Referenced documents will appear here.</p></div>;
+  return <section className="source-list">
+    <div className="border-b border-sepia-light/30 bg-card px-4 py-3"><h3 className="flex items-center gap-2 text-sm font-semibold ink-text" style={{fontFamily:"'IM Fell English SC', serif",letterSpacing:"0.05em"}}>Referenced Documents<span className="rounded-full parchment-bg px-2 py-0.5 text-[10px] ink-faded border border-sepia-light/30" style={{fontFamily:"'Spectral', serif"}}>{sources.length}</span></h3></div>
+    <div className="source-list-content flex flex-col gap-3 p-4">{sortedSources.map((source,index) => <SourceCard key={`${source.id}-${index}`} source={source} onViewDocument={() => onOpenDocument(source)} />)}</div>
+  </section>;
 }

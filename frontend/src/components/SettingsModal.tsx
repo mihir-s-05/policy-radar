@@ -75,6 +75,10 @@ interface SettingsModalProps {
     providers?: Record<string, ProviderInfo>;
     embeddingProviders?: Record<string, EmbeddingProviderInfo>;
     defaultApiMode?: ApiMode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    hideTrigger?: boolean;
+    onCloseFocus?: () => void;
 }
 
 export function SettingsModal({
@@ -83,9 +87,15 @@ export function SettingsModal({
     onSettingsChange,
     providers = {},
     embeddingProviders = {},
-    defaultApiMode = "responses"
+    defaultApiMode = "responses",
+    open: controlledOpen,
+    onOpenChange,
+    hideTrigger = false,
+    onCloseFocus,
 }: SettingsModalProps) {
-    const [open, setOpen] = useState(false);
+    const [internalOpen, setInternalOpen] = useState(false);
+    const open = controlledOpen ?? internalOpen;
+    const setOpen = (next: boolean) => { setInternalOpen(next); onOpenChange?.(next); };
     const [showApiKey, setShowApiKey] = useState(false);
     const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
     const [activeTab, setActiveTab] = useState<"model" | "embedding" | "data">("model");
@@ -556,7 +566,7 @@ export function SettingsModal({
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
+            {!hideTrigger && <DialogTrigger asChild>
                 <Button
                     variant="ghost"
                     size="icon"
@@ -566,8 +576,8 @@ export function SettingsModal({
                     <Settings className="h-4 w-4" />
                     <span className="sr-only">Settings</span>
                 </Button>
-            </DialogTrigger>
-            <DialogContent className="parchment-bg border-sepia-light/50 max-w-lg max-h-[85vh] overflow-y-auto">
+            </DialogTrigger>}
+            <DialogContent className="settings-dialog parchment-bg border-sepia-light/50 max-w-lg max-h-[85vh]" onCloseAutoFocus={event => { if (onCloseFocus) { event.preventDefault(); onCloseFocus(); } }}>
                 <DialogHeader>
                     <DialogTitle
                         className="ink-text"
@@ -578,13 +588,14 @@ export function SettingsModal({
                     <DialogDescription className="sr-only">Choose your model provider, API key, and PDF embedding settings.</DialogDescription>
                 </DialogHeader>
 
-                <div className="flex flex-col gap-4">
-                    <div className="flex flex-wrap items-center gap-2">
+                <div className="settings-body flex flex-col gap-4">
+                    <div className="settings-tabs flex flex-wrap items-center gap-2" role="group" aria-label="Settings sections">
                         <Button
                             variant="outline"
                             size="sm"
                             className={`btn-parchment text-xs ${activeTab === "model" ? "border-sepia-brown text-sepia-brown" : "border-sepia-light/50"}`}
                             onClick={() => setActiveTab("model")}
+                            aria-pressed={activeTab === "model"}
                         >
                             <span style={{ fontFamily: "'IM Fell English SC', serif" }}>Model Provider</span>
                         </Button>
@@ -593,10 +604,11 @@ export function SettingsModal({
                             size="sm"
                             className={`btn-parchment text-xs ${activeTab === "embedding" ? "border-sepia-brown text-sepia-brown" : "border-sepia-light/50"}`}
                             onClick={() => setActiveTab("embedding")}
+                            aria-pressed={activeTab === "embedding"}
                         >
                             <span style={{ fontFamily: "'IM Fell English SC', serif" }}>Embeddings</span>
                         </Button>
-                        {publicMode&&embeddingProviders.cloudflare&&<Button variant="outline" size="sm" className={`btn-parchment text-xs ${activeTab==="data"?"border-sepia-brown text-sepia-brown":"border-sepia-light/50"}`} onClick={()=>setActiveTab("data")}><span style={{fontFamily:"'IM Fell English SC', serif"}}>Saved data</span></Button>}
+                        {publicMode&&embeddingProviders.cloudflare&&<Button variant="outline" size="sm" className={`btn-parchment text-xs ${activeTab==="data"?"border-sepia-brown text-sepia-brown":"border-sepia-light/50"}`} aria-pressed={activeTab === "data"} onClick={()=>setActiveTab("data")}><span style={{fontFamily:"'IM Fell English SC', serif"}}>Saved data</span></Button>}
                     </div>
 
                     {activeTab==="data"&&publicMode&&embeddingProviders.cloudflare&&<BrowserDataPanel/>}
@@ -611,7 +623,7 @@ export function SettingsModal({
                             Model Provider
                         </label>
                         <Select value={settings.provider} onValueChange={handleProviderChange}>
-                            <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                            <SelectTrigger aria-label="Chat provider" className="w-full btn-parchment border-sepia-light/50">
                                 <SelectValue placeholder="Select provider" />
                             </SelectTrigger>
                             <SelectContent className="parchment-bg border-sepia-light/50">
@@ -676,6 +688,8 @@ export function SettingsModal({
                                 <p className="text-sm ink-faded italic">No models available</p>
                             )}
 
+                            <details className="model-management" open={window.matchMedia("(min-width: 1024px)").matches}>
+                            <summary>Manage models</summary>
                             <div className="mt-2 p-3 rounded border border-sepia-light/30 bg-parchment-200/20">
                                 <p
                                     className="text-xs ink-faded mb-2"
@@ -745,6 +759,7 @@ export function SettingsModal({
                                     </p>
                                 )}
                             </div>
+                            </details>
                         </section>
                     )}
 
@@ -787,11 +802,15 @@ export function SettingsModal({
                             >
                                 {apiKeyDetected
                                     ? "Enter a key below to override the environment key."
-                                    : publicMode ? "Use your own API key. It is kept for this tab and sent through the server to your provider. Your provider bills your usage." : "Enter your API key to use this provider."}
+                                    : publicMode ? "Your key stays in this tab. Your provider bills chat usage." : "Enter your API key to use this provider."}
                             </p>
                             <div className="flex gap-2">
                                 <Input
                                     type={showApiKey ? "text" : "password"}
+                                    aria-label="Chat API key"
+                                    autoComplete="off"
+                                    autoCapitalize="none"
+                                    spellCheck={false}
                                     value={currentApiKey}
                                     onChange={(e) => handleApiKeyChange(e.target.value)}
                                     placeholder={`${providers[settings.provider]?.display_name || settings.provider} API Key`}
@@ -803,6 +822,7 @@ export function SettingsModal({
                                     size="icon"
                                     className="h-9 w-9 btn-parchment"
                                     onClick={() => setShowApiKey(!showApiKey)}
+                                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
                                 >
                                     {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </Button>
@@ -1132,7 +1152,7 @@ export function SettingsModal({
                                     value={settings.embedding.provider}
                                     onValueChange={handleEmbeddingProviderChange}
                                 >
-                                    <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                                    <SelectTrigger aria-label="Embedding provider" className="w-full btn-parchment border-sepia-light/50">
                                         <SelectValue placeholder="Select provider" />
                                     </SelectTrigger>
                                     <SelectContent className="parchment-bg border-sepia-light/50">
@@ -1174,7 +1194,7 @@ export function SettingsModal({
 
                                 {embeddingAvailableModels.length > 0 ? (
                                     <Select value={settings.embedding.model} onValueChange={handleEmbeddingModelChange}>
-                                        <SelectTrigger className="w-full btn-parchment border-sepia-light/50">
+                                        <SelectTrigger aria-label="Embedding model" className="w-full btn-parchment border-sepia-light/50">
                                             <SelectValue placeholder="Select embedding model" />
                                         </SelectTrigger>
                                         <SelectContent className="parchment-bg border-sepia-light/50">
@@ -1193,7 +1213,8 @@ export function SettingsModal({
                                     <p className="text-sm ink-faded italic">No embedding models available</p>
                                 )}
 
-                                <div className="mt-2 p-3 rounded border border-sepia-light/30 bg-parchment-200/20">
+                                {embeddingProviders.cloudflare && <p className="text-sm ink-faded">{settings.embedding.provider === "local" ? "Downloads once, then runs on this device." : "Uses the shared free quota. Stops at the daily limit."}</p>}
+                                {!embeddingProviders.cloudflare && <div className="mt-2 p-3 rounded border border-sepia-light/30 bg-parchment-200/20">
                                     <p
                                         className="text-xs ink-faded mb-2"
                                         style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic" }}
@@ -1265,7 +1286,7 @@ export function SettingsModal({
                                             {embeddingValidationResult.message}
                                         </p>
                                     )}
-                                </div>
+                                </div>}
                             </section>
 
                             {settings.embedding.provider !== "local" && settings.embedding.provider !== "cloudflare" && (
@@ -1312,6 +1333,10 @@ export function SettingsModal({
                                     <div className="flex gap-2">
                                         <Input
                                             type={showEmbeddingKey ? "text" : "password"}
+                                    aria-label="Embedding API key"
+                                    autoComplete="off"
+                                    autoCapitalize="none"
+                                    spellCheck={false}
                                             value={currentEmbeddingApiKey}
                                             onChange={(e) => handleEmbeddingApiKeyChange(e.target.value)}
                                             placeholder={`${currentEmbeddingProviderInfo?.display_name || settings.embedding.provider} API Key`}
@@ -1323,6 +1348,7 @@ export function SettingsModal({
                                             size="icon"
                                             className="h-9 w-9 btn-parchment"
                                             onClick={() => setShowEmbeddingKey(!showEmbeddingKey)}
+                                            aria-label={showEmbeddingKey ? "Hide embedding API key" : "Show embedding API key"}
                                         >
                                             {showEmbeddingKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                         </Button>
@@ -1358,7 +1384,7 @@ export function SettingsModal({
                     )}
                 </div>
 
-                <DialogFooter className="flex flex-row justify-between items-center gap-2 pt-4 border-t border-sepia-light/30">
+                <DialogFooter className="settings-footer flex flex-row justify-between items-center gap-2 pt-4 border-t border-sepia-light/30">
                     <Button
                         variant="ghost"
                         size="sm"

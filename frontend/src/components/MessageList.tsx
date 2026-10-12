@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { User, Feather } from "lucide-react";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
-import type { Message } from "../types";
+import type { Message, SourceItem } from "../types";
 import { cn } from "../lib/utils";
 
 function QuillIcon({ className }: { className?: string }) {
@@ -13,7 +13,7 @@ function QuillIcon({ className }: { className?: string }) {
   );
 }
 
-function ManuscriptStreamingText({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+function ManuscriptStreamingText({ content, isStreaming, sources, onOpenDocument }: { content: string; isStreaming: boolean; sources?: SourceItem[]; onOpenDocument?: (source: SourceItem) => void }) {
   if (isStreaming && !content) {
     return (
       <div className="typing-indicator flex items-center gap-1 py-3">
@@ -44,6 +44,7 @@ function ManuscriptStreamingText({ content, isStreaming }: { content: string; is
                   rel="noopener noreferrer"
                   className="font-medium underline underline-offset-4 decoration-dotted hover:decoration-solid"
                   style={{ color: "hsl(30, 60%, 35%)" }}
+                  onClick={event => { const source = sources?.find(source => source.url === href || source.pdf_url === href); if (source && onOpenDocument) { event.preventDefault(); onOpenDocument(source); } }}
                 >
                   {children}
                 </a>
@@ -74,6 +75,7 @@ function ManuscriptStreamingText({ content, isStreaming }: { content: string; is
                   {children}
                 </blockquote>
               ),
+              table: ({ children }) => <div className="response-table" tabIndex={0} role="region" aria-label="Response table"><table>{children}</table></div>,
             }}
           >
             {content}
@@ -95,6 +97,7 @@ interface MessageListProps {
     content: string
   ) => Promise<void> | void;
   onSuggestion?: (suggestion: string) => void;
+  onOpenDocument?: (source: SourceItem) => void;
 }
 
 export function MessageList({
@@ -103,12 +106,16 @@ export function MessageList({
   isBusy,
   onEditMessage,
   onSuggestion,
+  onOpenDocument,
 }: MessageListProps) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(true);
+  const [showLatest, setShowLatest] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
   const suggestionPool = [
@@ -136,7 +143,8 @@ export function MessageList({
   };
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!messages.length) followingRef.current = true;
+    if (followingRef.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
@@ -180,10 +188,9 @@ export function MessageList({
               className="text-3xl font-bold tracking-wide ink-text"
               style={{ fontFamily: "'IM Fell English SC', serif", letterSpacing: "0.15em" }}
             >
-              Policy Archives
+              <span className="desktop-welcome-title">Policy Archives</span><span className="mobile-welcome-title">Start an inquiry</span>
             </h2>
-            <p
-              className="text-sm ink-faded mt-1"
+            <p className="welcome-description text-sm ink-faded mt-1"
               style={{ fontFamily: "'IM Fell English', serif" }}
             >
               Track federal regulatory activity, analyze rulemakings, and search
@@ -245,9 +252,11 @@ export function MessageList({
   };
 
   const cancelEditing = () => {
+    const previousId = editingId;
     setEditingId(null);
     setDraft("");
     setEditError(null);
+    requestAnimationFrame(() => { if (previousId) editButtonsRef.current.get(previousId)?.focus(); });
   };
 
   const saveEdit = async (message: Message) => {
@@ -274,12 +283,18 @@ export function MessageList({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4 md:p-6">
+    <div className="message-list-shell relative flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div ref={scrollRef} className="message-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4 md:p-6" tabIndex={0} aria-label="Conversation" onScroll={() => {
+      const element = scrollRef.current;
+      if (element) { followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; setShowLatest(!followingRef.current); }
+    }}>
       {messages.map((message) => {
         const isUser = message.role === "user";
         return (
           <div
             key={message.id}
+            role="article"
+            aria-label={isUser ? "Your inquiry" : "Research response"}
             className={cn(
               "group flex w-full max-w-3xl gap-4 md:gap-6 message-bubble items-start",
               isUser ? "ml-auto flex-row-reverse" : "mr-auto"
@@ -287,7 +302,7 @@ export function MessageList({
           >
             <div
               className={cn(
-                "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border shadow-sm",
+                "message-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-full border shadow-sm",
                 isUser
                   ? "btn-wax border-none"
                   : "parchment-bg border-sepia-light/50"
@@ -313,9 +328,11 @@ export function MessageList({
                 )}
               >
                 {editingId === message.id ? (
-                  <div className="flex w-full min-w-[300px] flex-col gap-2">
+                  <div className="message-editor flex w-full min-w-0 flex-col gap-2">
                     <Textarea
+                      autoFocus
                       value={draft}
+                      aria-label="Edit inquiry"
                       onChange={(event) => setDraft(event.target.value)}
                       rows={3}
                       disabled={isSaving}
@@ -351,6 +368,8 @@ export function MessageList({
                         <ManuscriptStreamingText
                           content={message.content}
                           isStreaming={true}
+                          sources={message.sources}
+                          onOpenDocument={onOpenDocument}
                         />
                       ) : (
                         <div className="manuscript-unfurl-wrapper scroll-top-curl">
@@ -366,6 +385,7 @@ export function MessageList({
                                       rel="noopener noreferrer"
                                       className="font-medium underline underline-offset-4 decoration-dotted hover:decoration-solid"
                                       style={{ color: "hsl(30, 60%, 35%)" }}
+                                      onClick={event => { const source = message.sources?.find(source => source.url === href || source.pdf_url === href); if (source && onOpenDocument) { event.preventDefault(); onOpenDocument(source); } }}
                                     >
                                       {children}
                                     </a>
@@ -382,6 +402,7 @@ export function MessageList({
                                   strong: ({ children }) => (
                                     <strong className="font-semibold" style={{ color: "hsl(25, 40%, 15%)" }}>{children}</strong>
                                   ),
+                                  table: ({ children }) => <div className="response-table" tabIndex={0} role="region" aria-label="Response table"><table>{children}</table></div>,
                                 }}
                               >
                                 {message.content}
@@ -404,11 +425,12 @@ export function MessageList({
 
               {!editingId && isUser && onEditMessage && (
                 <Button
+                  ref={button => { if (button) editButtonsRef.current.set(message.id, button); else editButtonsRef.current.delete(message.id); }}
                   variant="ghost"
                   size="sm"
                   onClick={() => startEditing(message)}
                   disabled={isBusy || isSaving}
-                  className="mt-1 h-6 px-2 text-xs opacity-0 transition-opacity group-hover:opacity-100 hover:bg-transparent hover:underline ink-faded"
+                  className="message-edit-trigger mt-1 h-6 px-2 text-xs opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:bg-transparent hover:underline ink-faded"
                   style={{ fontFamily: "'IM Fell English SC', serif" }}
                 >
                   Edit
@@ -423,11 +445,14 @@ export function MessageList({
                   {message.model}
                 </span>
               )}
+              {!isUser && Boolean(message.sources?.length) && onOpenDocument && <div className="message-citations flex flex-wrap gap-2 pt-2">{message.sources?.map((source, index) => <Button key={`${source.id}-${index}`} variant="outline" size="sm" className="btn-parchment" onClick={() => onOpenDocument(source)}>Source {index + 1}</Button>)}</div>}
             </div>
           </div>
         );
       })}
-      <div ref={endRef} />
+      <div />
+    </div>
+    {showLatest && <Button className="jump-latest absolute bottom-3 right-3 btn-parchment" variant="outline" onClick={() => { if (scrollRef.current) { followingRef.current = true; scrollRef.current.scrollTop = scrollRef.current.scrollHeight; setShowLatest(false); } }}>Latest response</Button>}
     </div>
   );
 }

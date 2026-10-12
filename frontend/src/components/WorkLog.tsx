@@ -31,8 +31,10 @@ function StepItem({ step }: { step: Step }) {
       </div>
 
       <div className="flex-1 pb-4">
-        <div
-          className="flex cursor-pointer items-center gap-2 py-0.5"
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          className="work-step-toggle flex cursor-pointer items-center gap-2 py-0.5 text-left"
           onClick={() => setIsExpanded(!isExpanded)}
         >
           <span
@@ -52,7 +54,7 @@ function StepItem({ step }: { step: Step }) {
           <span className="ink-faded hover:ink-text">
             {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </span>
-        </div>
+        </button>
 
         {isExpanded && (
           <div className="mt-2 rounded-md border border-sepia-light/30 parchment-bg p-3 text-xs">

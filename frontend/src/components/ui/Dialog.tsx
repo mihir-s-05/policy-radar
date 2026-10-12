@@ -4,7 +4,36 @@ import { X } from "lucide-react"
 
 import { cn } from "../../lib/utils"
 
-const Dialog = DialogPrimitive.Root
+function Dialog({ open: controlledOpen, defaultOpen = false, onOpenChange, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+    const [internalOpen, setInternalOpen] = React.useState(defaultOpen)
+    const open = controlledOpen ?? internalOpen
+    const id = React.useId()
+    const ownsHistory = React.useRef(false)
+    const change = React.useCallback((next: boolean) => {
+        setInternalOpen(next)
+        onOpenChange?.(next)
+    }, [onOpenChange])
+
+    React.useEffect(() => {
+        if (open && window.matchMedia("(max-width: 1023px)").matches && !ownsHistory.current) {
+            window.history.pushState({ policyRadarDialog: id }, "")
+            ownsHistory.current = true
+        } else if (!open && ownsHistory.current) {
+            ownsHistory.current = false
+            if (window.history.state?.policyRadarDialog === id) window.history.back()
+        }
+        const back = () => {
+            if (ownsHistory.current && window.history.state?.policyRadarDialog !== id) {
+                ownsHistory.current = false
+                change(false)
+            }
+        }
+        window.addEventListener("popstate", back)
+        return () => window.removeEventListener("popstate", back)
+    }, [open, id, change])
+
+    return <DialogPrimitive.Root {...props} open={open} onOpenChange={change} />
+}
 
 const DialogTrigger = DialogPrimitive.Trigger
 
@@ -36,13 +65,13 @@ const DialogContent = React.forwardRef<
         <DialogPrimitive.Content
             ref={ref}
             className={cn(
-                "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+                "app-dialog fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
                 className
             )}
             {...props}
         >
             {children}
-            <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+            <DialogPrimitive.Close className="dialog-close absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
                 <X className="h-4 w-4" />
                 <span className="sr-only">Close</span>
             </DialogPrimitive.Close>

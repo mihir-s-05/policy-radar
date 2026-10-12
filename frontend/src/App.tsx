@@ -6,9 +6,12 @@ import { ChatInput, ChatSidebar, MessageList, WorkLog, SourceCards, loadSourcesF
 import type { UserSettings } from "./components";
 import { FoxingOverlay } from "./components/FoxingOverlay";
 import type { Message, SourceSelection, SourceItem, ProviderInfo, EmbeddingProviderInfo, EmbeddingProvider } from "./types";
-import { PanelLeft, PanelRightClose } from "lucide-react";
+import { PanelLeft, PanelRightClose, Menu, Plus, BookOpen, Settings } from "lucide-react";
 import { Button } from "./components/ui/Button";
 import { DEFAULT_MODELS } from "./lib/modelCatalog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./components/ui/Dialog";
+import { DocumentReader } from "./components/DocumentReader";
+import { useMobileViewport } from "./hooks/useMobileViewport";
 
 const LEFT_SIDEBAR_MIN = 200;
 const LEFT_SIDEBAR_MAX = 450;
@@ -73,12 +76,34 @@ function App() {
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
   const [embeddingProviders, setEmbeddingProviders] = useState<Record<string, EmbeddingProviderInfo>>({});
   const [userSettings, setUserSettings] = useState<UserSettings>(() => loadSettings());
+  const isMobile = useMobileViewport();
+  const [mobilePanel, setMobilePanel] = useState<"inquiries" | "sources" | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [readingSource, setReadingSource] = useState<SourceItem | null>(null);
+  const navigationFocusRef = useRef<HTMLButtonElement | null>(null);
+  const settingsFocusRef = useRef<HTMLButtonElement | null>(null);
+  const readerFocusRef = useRef<HTMLElement | null>(null);
+  const focusComposerRef = useRef(false);
+
+  const openDocument = (source: SourceItem) => {
+    readerFocusRef.current = document.activeElement as HTMLElement;
+    setReadingSource(source);
+  };
+  const openSettings = (event: React.MouseEvent<HTMLButtonElement>) => {
+    settingsFocusRef.current = event.currentTarget;
+    setSettingsOpen(true);
+  };
 
   useEffect(()=>{
     const warning=(event:Event)=>setStorageWarning((event as CustomEvent<string>).detail);
     window.addEventListener("policy-storage-error",warning);
     return ()=>window.removeEventListener("policy-storage-error",warning);
   },[]);
+
+  useEffect(() => {
+    window.addEventListener("policy-data-changed", clearMessages);
+    return () => window.removeEventListener("policy-data-changed", clearMessages);
+  }, [clearMessages]);
 
   useEffect(() => {
     getConfig()
@@ -219,9 +244,15 @@ function App() {
   const handleNewChat = () => {
     clearMessages();
     selectSession("");
+    if (isMobile) {
+      focusComposerRef.current = mobilePanel !== null;
+      setMobilePanel(null);
+      if (!focusComposerRef.current) document.getElementById("inquiry-input")?.focus();
+    }
   };
 
   const handleSelectSession = (nextSessionId: string) => {
+    setMobilePanel(null);
     if (nextSessionId === sessionId || isChatBusy) {
       return;
     }
@@ -585,8 +616,15 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden font-body">
+    <div className="app-shell flex h-screen w-screen flex-col overflow-hidden font-body">
       <FoxingOverlay />
+      {isMobile && <header className="mobile-header">
+        <Button variant="ghost" size="icon" aria-label="Open inquiries" onClick={event => { navigationFocusRef.current = event.currentTarget; setMobilePanel("inquiries"); }}><Menu className="h-5 w-5" /></Button>
+        <div className="mobile-heading"><span>Policy Archives</span><small>{sessionId ? sessions.find(session => session.session_id === sessionId)?.title || "Inquiry" : "New inquiry"}</small></div>
+        <Button variant="ghost" size="icon" aria-label="New inquiry" disabled={isChatBusy} onClick={handleNewChat}><Plus className="h-5 w-5" /></Button>
+        <Button variant="ghost" size="icon" className="mobile-sources-trigger" aria-label="Open sources" onClick={event => { navigationFocusRef.current = event.currentTarget; setMobilePanel("sources"); }}><BookOpen className="h-5 w-5" />{currentSources.length > 0 && <span>{currentSources.length}</span>}</Button>
+        <Button variant="ghost" size="icon" aria-label="Settings" onClick={openSettings}><Settings className="h-5 w-5" /></Button>
+      </header>}
       <main
         ref={mainRef}
         className="sidebar-resizable-grid relative grid min-h-0 flex-1 overflow-hidden p-4"
@@ -597,7 +635,7 @@ function App() {
           gap: "0.5rem",
         } as React.CSSProperties}
       >
-        <ChatSidebar
+        {!isMobile && <ChatSidebar
           sessions={sessions}
           activeSessionId={sessionId}
           isLoading={sessionLoading}
@@ -607,7 +645,7 @@ function App() {
           onDeleteSession={removeSession}
           isCollapsed={leftSidebarCollapsed}
           onToggleCollapse={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
-        />
+        />}
         <div
           className={`sidebar-resize-handle group relative flex items-center justify-center ${leftSidebarCollapsed ? "pointer-events-none opacity-0" : "cursor-col-resize"}`}
           onMouseDown={handleLeftResizeStart}
@@ -621,6 +659,7 @@ function App() {
             onEditMessage={handleEditMessage}
             isBusy={isChatBusy}
             onSuggestion={handleSuggestedInquiry}
+            onOpenDocument={openDocument}
           />
           {historyError && (
             <div className="mx-4 mb-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -634,6 +673,7 @@ function App() {
             </div>
           )}
           <ChatInput
+            isMobile={isMobile}
             onSend={handleSendMessage}
             isLoading={isLoading}
             isBusy={isChatBusy}
@@ -666,14 +706,7 @@ function App() {
               />
             }
             settingsModal={
-              <SettingsModal
-                publicMode={publicMode}
-                settings={userSettings}
-                onSettingsChange={setUserSettings}
-                providers={providers}
-                embeddingProviders={embeddingProviders}
-                defaultApiMode="responses"
-              />
+              <Button variant="ghost" size="icon" className="h-8 w-8 ink-faded hover:ink-text" aria-label="Settings" onClick={openSettings}><Settings className="h-4 w-4" /></Button>
             }
           />
         </div>
@@ -683,7 +716,7 @@ function App() {
         >
           <div className="resize-handle-bar h-12 w-1 rounded-full bg-sepia-light/30 transition-all group-hover:h-24 group-hover:bg-sepia-brown/50 group-active:h-24 group-active:bg-sepia-brown/50" />
         </div>
-        <aside className="hidden flex-col gap-4 overflow-hidden rounded-xl border border-sepia-light/40 parchment-bg shadow-document lg:flex transition-all duration-300">
+        <aside className="desktop-particulars hidden flex-col gap-4 overflow-hidden rounded-xl border border-sepia-light/40 parchment-bg shadow-document lg:flex transition-all duration-300">
           <div className="flex items-center justify-between border-b border-sepia-light/30 bg-card px-4 py-3">
             {!rightSidebarCollapsed && (
               <h3
@@ -710,11 +743,26 @@ function App() {
           {!rightSidebarCollapsed && (
             <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
               <WorkLog steps={currentSteps} reasoningSummary={reasoningSummary} />
-              <SourceCards sources={currentSources} />
+              <SourceCards sources={currentSources} onOpenDocument={openDocument} />
             </div>
           )}
         </aside>
       </main>
+      <Dialog open={isMobile && mobilePanel !== null} onOpenChange={open => { if (!open) setMobilePanel(null); }}>
+        <DialogContent className={`mobile-drawer ${mobilePanel === "inquiries" ? "leather-bg text-parchment-100" : "parchment-bg"}`} onCloseAutoFocus={event => {
+          event.preventDefault();
+          if (focusComposerRef.current) { focusComposerRef.current = false; document.getElementById("inquiry-input")?.focus(); }
+          else navigationFocusRef.current?.focus();
+        }}>
+          <DialogHeader className={mobilePanel === "inquiries" ? "sr-only" : "drawer-header"}>
+            <DialogTitle>{mobilePanel === "inquiries" ? "Inquiries" : "Sources & activity"}</DialogTitle>
+            <DialogDescription className="sr-only">{mobilePanel === "inquiries" ? "Choose or start an inquiry." : "Review research activity and referenced documents."}</DialogDescription>
+          </DialogHeader>
+          {mobilePanel === "inquiries" ? <ChatSidebar sessions={sessions} activeSessionId={sessionId} isLoading={sessionLoading} isBusy={isChatBusy} onSelect={handleSelectSession} onNewChat={handleNewChat} onDeleteSession={removeSession} isCollapsed={false} onToggleCollapse={() => setMobilePanel(null)} isMobile /> : <div className="drawer-body"><WorkLog steps={currentSteps} reasoningSummary={reasoningSummary} /><SourceCards sources={currentSources} onOpenDocument={openDocument} /></div>}
+        </DialogContent>
+      </Dialog>
+      <SettingsModal publicMode={publicMode} settings={userSettings} onSettingsChange={setUserSettings} providers={providers} embeddingProviders={embeddingProviders} defaultApiMode="responses" open={settingsOpen} onOpenChange={setSettingsOpen} hideTrigger onCloseFocus={() => settingsFocusRef.current?.focus()} />
+      <DocumentReader source={readingSource} onClose={() => setReadingSource(null)} onCloseFocus={() => { if (readerFocusRef.current?.isConnected) readerFocusRef.current.focus(); }} />
     </div>
   );
 }
