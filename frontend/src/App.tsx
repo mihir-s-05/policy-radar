@@ -618,7 +618,7 @@ function App() {
   return (
     <div className="app-shell flex h-screen w-screen flex-col overflow-hidden font-body">
       <FoxingOverlay />
-      {isMobile && <header className="mobile-header">
+      {isMobile && <header className="mobile-header parchment-bg">
         <Button variant="ghost" size="icon" aria-label="Open inquiries" onClick={event => { navigationFocusRef.current = event.currentTarget; setMobilePanel("inquiries"); }}><Menu className="h-5 w-5" /></Button>
         <div className="mobile-heading"><span>Policy Archives</span><small>{sessionId ? sessions.find(session => session.session_id === sessionId)?.title || "Inquiry" : "New inquiry"}</small></div>
         <Button variant="ghost" size="icon" aria-label="New inquiry" disabled={isChatBusy} onClick={handleNewChat}><Plus className="h-5 w-5" /></Button>

@@ -110,6 +110,7 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
+  const touchingRef = useRef(false);
   const [showLatest, setShowLatest] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -117,6 +118,15 @@ export function MessageList({
   const [editError, setEditError] = useState<string | null>(null);
   const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  const finishTouchScroll = () => {
+    touchingRef.current = false;
+    const element = scrollRef.current;
+    if (element) {
+      followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+      setShowLatest(!followingRef.current);
+    }
+  };
 
   const suggestionPool = [
     "Summarize recent EPA rulemakings on emissions.",
@@ -284,9 +294,12 @@ export function MessageList({
 
   return (
     <div className="message-list-shell relative flex min-h-0 flex-1 flex-col overflow-hidden">
-    <div ref={scrollRef} className="message-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4 md:p-6" tabIndex={0} aria-label="Conversation" onScroll={() => {
+    <div ref={scrollRef} className="message-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4 md:p-6" tabIndex={0} aria-label="Conversation" onTouchStartCapture={() => {
+      touchingRef.current = true;
+      followingRef.current = false;
+    }} onTouchEndCapture={finishTouchScroll} onTouchCancelCapture={finishTouchScroll} onWheel={event => { if (event.deltaY < 0) followingRef.current = false; }} onScroll={() => {
       const element = scrollRef.current;
-      if (element) { followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; setShowLatest(!followingRef.current); }
+      if (element) { followingRef.current = !touchingRef.current && element.scrollHeight - element.scrollTop - element.clientHeight < 4; setShowLatest(!followingRef.current); }
     }}>
       {messages.map((message) => {
         const isUser = message.role === "user";
