@@ -52,6 +52,7 @@ function App() {
   const [publicMode, setPublicMode] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [storageWarning,setStorageWarning]=useState<string|null>(null);
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(LEFT_SIDEBAR_DEFAULT);
@@ -72,6 +73,12 @@ function App() {
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
   const [embeddingProviders, setEmbeddingProviders] = useState<Record<string, EmbeddingProviderInfo>>({});
   const [userSettings, setUserSettings] = useState<UserSettings>(() => loadSettings());
+
+  useEffect(()=>{
+    const warning=(event:Event)=>setStorageWarning((event as CustomEvent<string>).detail);
+    window.addEventListener("policy-storage-error",warning);
+    return ()=>window.removeEventListener("policy-storage-error",warning);
+  },[]);
 
   useEffect(() => {
     getConfig()
@@ -620,6 +627,7 @@ function App() {
               <p style={{ fontFamily: "'IM Fell English', serif" }}>{historyError}</p>
             </div>
           )}
+          {storageWarning&&<div role="alert" className="mx-4 mb-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{storageWarning}</div>}
           {error && (
             <div className="mx-4 mb-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
               <p style={{ fontFamily: "'IM Fell English', serif" }}>{error}</p>

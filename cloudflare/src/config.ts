@@ -3,7 +3,7 @@ import { EMBEDDING_MODEL } from "./embeddings";
 
 export function config() {
   return {
-    public_mode:true, execution_mode:"browser", model:DEFAULT_MODELS.openai[0], available_models:DEFAULT_MODELS.openai,
+    public_mode:true, execution_mode:"browser",storage_mode:"indexeddb", model:DEFAULT_MODELS.openai[0], available_models:DEFAULT_MODELS.openai,
     default_api_mode:"responses", embedding_provider:"cloudflare", embedding_model:EMBEDDING_MODEL,
     providers: {
       openai:{name:"openai",display_name:"OpenAI",base_url:"https://api.openai.com/v1",models:DEFAULT_MODELS.openai,api_key_detected:false,api_mode:"responses"},

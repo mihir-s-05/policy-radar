@@ -1,8 +1,11 @@
 import type { Transport } from "./browserTransport";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { cachedDocument } from "../lib/browserStore";
 
 export interface BrowserDocument { title:string; full_text:string; images:string[]; truncated:boolean }
-export async function readDocument(url:string,transport:Transport,signal?:AbortSignal,maxLength=500_000):Promise<BrowserDocument> {
+export async function readDocument(url:string,transport:Transport,signal?:AbortSignal,maxLength=500_000,preferSaved=false):Promise<BrowserDocument> {
+  const cached=await cachedDocument(url);
+  if(cached&&typeof cached.data.full_text==="string"&&(preferSaved||Date.now()-Date.parse(cached.saved_at||"")<600_000))return {...cached.data,full_text:cached.data.full_text.slice(0,maxLength),truncated:Boolean(cached.data.truncated)||cached.data.full_text.length>maxLength} as unknown as BrowserDocument;
   const response=await transport("/api/content/raw",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url}),signal});
   if(!response.ok){const error=await response.json();throw new Error(error.detail||"Document fetch failed.");}
   const bytes=new Uint8Array(await response.arrayBuffer());signal?.throwIfAborted();

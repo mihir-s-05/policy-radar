@@ -29,6 +29,7 @@ import {
 } from "./ui/Select";
 import { validateModel, startOAuthFlow, getOAuthStatus, logoutOAuth } from "../api/client";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "../lib/settingsStorage";
+import { BrowserDataPanel } from "./BrowserDataPanel";
 
 export interface UserSettings {
     provider: ModelProvider;
@@ -87,7 +88,7 @@ export function SettingsModal({
     const [open, setOpen] = useState(false);
     const [showApiKey, setShowApiKey] = useState(false);
     const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
-    const [activeTab, setActiveTab] = useState<"model" | "embedding">("model");
+    const [activeTab, setActiveTab] = useState<"model" | "embedding" | "data">("model");
 
     const [newModelName, setNewModelName] = useState("");
     const [validatingModel, setValidatingModel] = useState(false);
@@ -578,7 +579,7 @@ export function SettingsModal({
                 </DialogHeader>
 
                 <div className="flex flex-col gap-4">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         <Button
                             variant="outline"
                             size="sm"
@@ -595,7 +596,10 @@ export function SettingsModal({
                         >
                             <span style={{ fontFamily: "'IM Fell English SC', serif" }}>Embeddings</span>
                         </Button>
+                        {publicMode&&embeddingProviders.cloudflare&&<Button variant="outline" size="sm" className={`btn-parchment text-xs ${activeTab==="data"?"border-sepia-brown text-sepia-brown":"border-sepia-light/50"}`} onClick={()=>setActiveTab("data")}><span style={{fontFamily:"'IM Fell English SC', serif"}}>Saved data</span></Button>}
                     </div>
+
+                    {activeTab==="data"&&publicMode&&embeddingProviders.cloudflare&&<BrowserDataPanel/>}
 
                     {activeTab === "model" && (
                         <div className="flex flex-col gap-6">

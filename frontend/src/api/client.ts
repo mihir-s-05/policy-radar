@@ -28,10 +28,29 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http:/
 const BROWSER_TOKEN_KEY = "policy-radar-browser-token";
 let browserToken: string | undefined;
 let browserExecution = false;
+let configPromise:Promise<ConfigResponse>|undefined;
 export const isBrowserExecution = () => browserExecution;
 export const apiTransport = (path: string, options?: RequestInit) => apiFetch(`${API_BASE}${path}`, options);
 
-function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const path=new URL(url,window.location.origin).pathname;
+  const sessionPath=path==="/api/session"||path==="/api/sessions"||path.startsWith("/api/sessions/")||path.startsWith("/api/chat/");
+  if(sessionPath&&(await getConfig()).execution_mode==="browser") {
+    const store=await import("../lib/browserStore"),input=options.body?JSON.parse(String(options.body)):{};
+    options.signal?.throwIfAborted();
+    if(path==="/api/session")return Response.json(await store.createLocalSession());
+    if(path==="/api/sessions")return Response.json(await store.listLocalSessions());
+    const match=path.match(/^\/api\/sessions\/([a-zA-Z0-9-]+)(?:\/messages(?:\/(\d+))?)?$/);
+    if(match) {
+      if(options.method==="DELETE"){await store.deleteLocalSession(match[1]);return Response.json({deleted:true});}
+      if(options.method==="PATCH"){const updated=await store.changeSession(match[1],row=>{const message=row.messages.find(item=>item.id===Number(match[2]));if(!message)return false;message.content=String(input.content).slice(0,80_000);return true;});return Response.json({updated});}
+      return Response.json({session_id:match[1],messages:(await store.getLocalSession(match[1])).messages});
+    }
+    if(path==="/api/chat/start")return Response.json(await store.beginInquiry(input.session_id,input.request_id,input.message));
+    if(path==="/api/chat/finish")return Response.json(await store.finishInquiry(input.session_id,input.request_id,input.answer_text,input.sources,input.steps,input.model));
+    if(path==="/api/chat/stop")return Response.json({stopped:true});
+    throw new Error("Local conversation operation is unavailable.");
+  }
   if (!browserToken) {
     try {
       const stored = localStorage.getItem(BROWSER_TOKEN_KEY);
@@ -44,7 +63,7 @@ function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
     }
   }
   const headers = new Headers(options.headers);
-  headers.set("X-Session-Token", browserToken);
+  if(!headers.has("X-Session-Token"))headers.set("X-Session-Token", browserToken);
   return fetch(url, { ...options, headers });
 }
 
@@ -68,10 +87,14 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to delete session: ${response.statusText}`);
   }
-  if (browserExecution) await (await import("../lib/browserEmbeddings")).deleteDocumentIndex(sessionId);
 }
 
 export async function getConfig(): Promise<ConfigResponse> {
+  if(configPromise)return configPromise;
+  configPromise=loadConfig().catch(error=>{configPromise=undefined;throw error;});
+  return configPromise;
+}
+async function loadConfig():Promise<ConfigResponse> {
   const response = await apiFetch(`${API_BASE}/api/config`, {
     method: "GET",
   });
@@ -116,7 +139,7 @@ export async function fetchContent(
   request: FetchContentRequest
 ): Promise<FetchContentResponse> {
   if (browserExecution) {
-    const document = await (await import("./browserDocuments")).readDocument(request.url, apiTransport, undefined, request.max_length || 500_000);
+    const document = await (await import("./browserDocuments")).readDocument(request.url, apiTransport, undefined, request.max_length || 500_000,true);
     return { url: request.url, title: document.title, full_text: document.full_text };
   }
   const response = await apiFetch(`${API_BASE}/api/content/fetch`, {

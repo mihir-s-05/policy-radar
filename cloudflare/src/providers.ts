@@ -1,14 +1,14 @@
-import { body, HttpError, json, ownsSession, readBounded, record, text } from "./http";
+import { body, HttpError, json, record, text } from "./http";
 
 const endpoints = {
   openai: "https://api.openai.com/v1/",
   anthropic: "https://api.anthropic.com/v1/",
   gemini: "https://generativelanguage.googleapis.com/v1beta/",
 };
-export async function provider(request: Request, env: Env, ownerHash: string, validate = false) {
+export async function provider(request: Request, validate = false) {
   const input = await body(request, 700_000);
   const name = text(input.provider) as keyof typeof endpoints;
-  if (!(name in endpoints)) throw new HttpError(400, "Select OpenAI, Anthropic, or Gemini.");
+  if (!Object.hasOwn(endpoints,name)) throw new HttpError(400, "Select OpenAI, Anthropic, or Gemini.");
   const key = text(input.api_key, 500).trim();
   if (!key) throw new HttpError(400, "Enter your own provider API key in Configuration before sending an inquiry.");
   const model = text(input.model_name || input.model, 100);
@@ -22,11 +22,8 @@ export async function provider(request: Request, env: Env, ownerHash: string, va
     await result.body?.cancel();
     return json({ valid: result.ok, message: result.ok ? "Model is available with your key." : `Provider rejected model validation (${result.status}).` });
   }
-  const sessionId = text(input.session_id,100), requestId = text(input.request_id,100);
-  await ownsSession(env, ownerHash, sessionId);
-  const active = await env.DB.prepare("SELECT cancelled FROM requests WHERE owner_hash=? AND request_id=? AND session_id=?")
-    .bind(ownerHash,requestId,sessionId).first<{cancelled:number}>();
-  if (!active || active.cancelled) throw new HttpError(409, "Inquiry has stopped.");
+  // Bounded native conversation comes from this browser; its provider key
+  // authorizes inference. No server conversation or request record is needed.
   const payload = record(input.payload);
   let path: string;
   if (name === "openai") {

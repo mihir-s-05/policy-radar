@@ -330,7 +330,7 @@ export function useChat({ sessionId }: UseChatOptions) {
 
   const loadMessages = useCallback((history: Message[], sources?: SourceItem[]) => {
     setMessages(history);
-    setCurrentSteps([]);
+    setCurrentSteps([...history].reverse().find(message=>message.role==="assistant")?.steps||[]);
     setCurrentSources(sources || []);
     setReasoningSummary(null);
     setError(null);

@@ -172,17 +172,47 @@ API charges. The Worker has no owner chat key. Cloudflare embeddings use the fre
 allocation, while Local embeddings run on the visitor's device. API keys are not
 stored in D1, document indexes, or logs. Python remains available for local development.
 
-Hosted sessions require a random browser-held `X-Session-Token`. Only its hash is
-stored on sessions; listing, reading, editing, deleting, chatting, and cancellation
-are scoped to that browser. Old local sessions have no public owner and stay hidden.
-This is browser-scoped access, not account login or cross-device sync. Clearing site
-storage loses the browser's capability to retrieve its saved sessions.
+Hosted conversations, messages, citations, research steps, model names, document
+text, and model-specific vector indexes are durable browser IndexedDB records.
+The existing `policy-radar-documents` database upgrades in place. Conversation
+creation, browsing, editing, saving, deletion, and stopping do not send session
+requests to the Worker or write D1. The browser sends only recent history (at most
+30 messages / 120 KB of text), followed by bounded native tool state; the relay
+rejects JSON above 700 KB. Cancellation aborts the browser's provider stream.
+Cloudflare and MiniLM vectors remain separate despite sharing 384 dimensions.
+Deleting a conversation atomically removes its documents and research artifacts.
 
-Hosted D1 saves messages, citations, research steps, and model names. Document text
-and model-specific vector indexes stay in the visitor's IndexedDB. Cloudflare and
-MiniLM vectors are never mixed, even though both have 384 dimensions. Deleting a
-session also removes its browser index. The new hosted database starts empty;
-the private Python SQLite/Chroma data is not uploaded.
+Configuration → Saved data exports/imports a versioned JSON backup (up to 50 MB),
+with an individual-conversation export option for larger libraries,
+and clears saved browser data only after confirmation. Imports validate content
+and vectors, exclude credential fields, and preserve conflicting conversations
+instead of overwriting them. Storage denial, full storage, and blocked upgrades
+produce visible errors; there is no silent durable fallback. Browsers can evict
+site data, so retain an export. Backups contain private research: keep them safe.
+Data is specific to this browser profile and origin, without account sync.
+
+Previous D1 sessions are frozen and protected by the original browser capability.
+Configuration offers an explicit import, including a migration-code input for a
+different origin. Import commits locally before deletion is offered; an export
+and a separate confirmation are required by the UI before deleting server copies.
+Legacy session/message reads are paginated; oversized imports fail visibly and
+leave server copies intact. No migration drops the old tables or their content.
+The cutover check found one empty session and zero messages. The private Python
+SQLite/Chroma database was never uploaded. The local Python app keeps its existing
+session API and storage behavior.
+
+Browser storage belongs to an origin: `workers.dev` data does not automatically
+appear at `policy.mihir-s.com`. Transfer a saved-data export between origins. If
+the old URL is already disabled and you need its browser data, temporarily
+re-enable the existing Worker's old route for an owner-approved export, then
+disable it again; do not create another deployment. A legacy server migration
+code is the original `policy-radar-browser-token` capability, not a chat API key.
+Existing old-origin browser data and server copies are retained, not purged.
+
+The source reader can reopen saved document text without an upstream fetch.
+New research only reuses a document artifact as a ten-minute cache, then refreshes
+the government source, so durable saved research does not become a permanent
+cache of live government content.
 
 ### Current model catalog
 
@@ -228,31 +258,46 @@ can make many upstream calls, so these are request quotas, not user/session quot
 Budgeting 20 uncached calls per run would allow roughly 50 runs/hour at the most
 restrictive default; that is a planning estimate, not a measured run cost.
 
-Current code already caches GET responses for ten minutes in process and retries
-429s. GovInfo search POSTs and source-text fetches need shared caching. Before public
-launch, add a durable app-wide budget with reserve capacity and upstream-header
-telemetry; do not rely on the current per-process inbound IP limiter alone.
+The hosted Worker shares a ten-minute D1 cache for public GET and search POST
+responses. Cache hits do not reserve upstream calls or write D1. Uncached calls,
+document fetches, and redirect hops reserve globally: 800 per rolling 61-minute
+window and 4,000/day. Failed attempts keep reservations. Stored response payloads
+are capped at 64 KB; larger responses reach the browser without entering D1.
 
 ### Cloudflare Free deployment
 
-Live app: **https://policy-radar.m-srivastava.workers.dev/**. The dashboard showed
-**Free / Current plan / $0** on October 11, 2026. Keep this account on Workers Free:
+Live app: **https://policy.mihir-s.com/**. The dashboard showed
+**Free / Current plan / $0** before the custom-domain deployment. Keep this account on Workers Free:
 Cloudflare blocks excess Workers AI use on Free; Paid accounts charge for overage.
 This deployment uses Workers Static Assets, Workers AI, and D1.
 
 The existing frontend keeps its layout and styling. Small Worker endpoints relay
 visitor chat requests and government API calls. The research loop, PDF.js extraction,
 and vector search run in the browser to avoid a heavy server workload. D1 stores
-owned sessions, request cancellation, the government cache, and atomic budgets.
+only the bounded government cache and atomic budgets, plus frozen legacy sessions
+awaiting explicit migration. No new user conversation content is stored there.
 Production uses same-origin requests through `frontend/.env.production`.
 
 The default embedding model is `@cf/baai/bge-small-en-v1.5`. Before every call, D1
-atomically reserves a conservative estimate using UTF-8 bytes, a 2x margin, and
-per-text overhead. The shared daily reservation limit is 8,000, below Cloudflare's
-10,000-neuron/day free allowance. Failed calls retain their reservations. Any
+atomically reserves `ceil((UTF-8 bytes + 512 × texts) × 1841 × 4 / 1,000,000) + texts`
+units, using the entire input rather than relying on the model's 512-token
+truncation. The rate is 1,841 neurons per million input tokens; the 4x margin and
+per-text overhead are intentionally conservative. Policy Radar's daily reservation
+limit is clamped to 4,000, leaving planning headroom for other projects sharing the
+account's 10,000-neuron/day allowance. Each request allows 1–16 nonempty texts,
+1,600 characters/text, and a 40 KB JSON body. The model is fixed server-side;
+client model, budget, session, or token changes cannot increase the cap.
+Failed calls retain their reservations. Any
 upstream error blocks embeddings for the remaining UTC day. The browser stops
 sending calls after a quota rejection, and no paid fallback runs. Cloudflare's
-account-wide Free limit is the final billing protection if other apps use the quota.
+account-wide Free limit is the actual no-overage billing barrier. Reservations
+are not actual neuron measurements and cannot enforce a precise realtime
+account-wide allowance: other Workers consume it independently, metering can lag,
+and pricing/tokenization can change. Calls already admitted concurrently may finish
+after another call fails, but all retain their atomic reservations. D1 failures
+before admission prevent inference. The failure latch also requires a successful
+D1 write; Free remains the final protection if that write itself fails. Do not
+upgrade Workers Paid or configure paid AI Gateway credits for this app.
 
 The allowance resets at 00:00 UTC. Chat and direct document reading can still work
 when embeddings stop. Visitors may manually select Local in Configuration's existing
@@ -267,7 +312,22 @@ chunks per document. Scanned pages retain a bounded image-reading path with the
 visitor's chat model. Government requests share an 800-request rolling hourly
 budget and reuse cached searches for ten minutes. Only the government key is
 deployed as a secret. Search.gov needs separate affiliate/access-key configuration.
-Hourly maintenance clears expired caches, budgets, and request-control records.
+Hourly maintenance clears expired cache/control rows and old minute buckets.
+There are no per-visitor D1 counters or new request-control records.
+
+Burst limits use Workers' rate-limit bindings: 80 API calls/minute per ingress IP,
+40 embedding calls/minute per IP (enough for one bounded PDF index), and 240 API
+calls/minute shared per location.
+Namespaces are specific to Policy Radar. IP keys use Cloudflare's ingress header,
+so rotating browser capabilities cannot reset them, but shared networks may share
+a burst limit. These bindings are permissive, eventually consistent, and **local
+to a Cloudflare location**, not global accounting. The tiny D1 budget store remains
+necessary for globally atomic limits; public cache writes occur only on bounded
+uncached government requests. Ordinary browsing and local embeddings do not write
+D1. Daily government admission bounds D1 work/cache growth under rotating clients.
+These resources remain on Workers Free, with no paid gateway or infrastructure.
+`policy-radar` is the same Worker; its custom domain is `policy.mihir-s.com` and
+`workers_dev` / `preview_urls` are explicitly disabled.
 
 For a new deployment, first verify Workers Free in the dashboard, create an empty
 D1 database, and put its ID in `cloudflare/wrangler.jsonc`:

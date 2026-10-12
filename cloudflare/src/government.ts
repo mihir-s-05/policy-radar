@@ -1,4 +1,5 @@
 import { HttpError, integer, readBounded, sha256, text } from "./http";
+import { reserve } from "./budget";
 
 type Obj = Record<string, unknown>;
 export const obj = (x:unknown):Obj => x && typeof x === "object" && !Array.isArray(x) ? x as Obj : {};
@@ -17,13 +18,16 @@ function withoutGovernmentKeys(value:string,env:Env):string {
 const daysAgo = (days:number) => new Date(Date.now()-days*86400_000).toISOString().slice(0,10);
 
 async function govBudget(env:Env) {
+  // The daily bound limits cache growth and D1 work even under rotating clients.
+  // Keep a reservation when the hourly limit/upstream fails: no blind refunds.
+  await reserve(env,`gov-day:${new Date().toISOString().slice(0,10)}`,1,integer(Number(env.GOV_DAILY_BUDGET),4000,4000));
   const minute=Math.floor(Date.now()/60000), bucket=`gov:${minute}`;
   const maximum=integer(Number(env.GOV_HOURLY_BUDGET),800,800);
   const row=await env.DB.prepare(`INSERT INTO budgets(bucket,used)
     SELECT ?,1 WHERE (SELECT COALESCE(SUM(used),0) FROM budgets
-      WHERE bucket LIKE 'gov:%' AND CAST(SUBSTR(bucket,5) AS INTEGER)>=?)<?
+      WHERE bucket>=? AND bucket<=?)<?
     ON CONFLICT(bucket) DO UPDATE SET used=used+1 RETURNING used`)
-    .bind(bucket,minute-60,maximum).first();
+    .bind(bucket,`gov:${minute-60}`,bucket,maximum).first();
   if (!row) throw new HttpError(429,"The shared government request budget is temporarily exhausted.");
 }
 export async function governmentJSON(env:Env, url:URL, payload?:Obj):Promise<Obj> {
@@ -48,8 +52,11 @@ export async function governmentJSON(env:Env, url:URL, payload?:Obj):Promise<Obj
   const data=withoutGovernmentKeys(await readBounded(response,600_000),env);
   const parsed=JSON.parse(data);
   const normalized=Array.isArray(parsed)?{results:parsed}:obj(parsed);
-  await env.DB.prepare("INSERT INTO upstream_cache VALUES(?,?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,expires_at=excluded.expires_at")
-    .bind(cacheKey,JSON.stringify(normalized),now+600).run();
+  const serialized=JSON.stringify(normalized);
+  // Cache only bounded public JSON; large results still reach the browser.
+  // At 800 cache misses/hour, a ten-minute TTL + hourly cleanup stays small.
+  if(new TextEncoder().encode(serialized).length<=64_000)await env.DB.prepare("INSERT INTO upstream_cache VALUES(?,?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,expires_at=excluded.expires_at")
+    .bind(cacheKey,serialized,now+600).run();
   return normalized;
 }
 const withParams=(base:string,params:Obj) => {

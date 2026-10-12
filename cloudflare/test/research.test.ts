@@ -1,6 +1,7 @@
 import { it,expect,vi } from "vitest";
 vi.mock("../../frontend/src/lib/browserEmbeddings",()=>({indexDocument:vi.fn(),queryDocuments:vi.fn(async()=>({count:0,matches:[]}))}));
 vi.mock("../../frontend/src/api/browserDocuments",()=>({readDocument:vi.fn()}));
+vi.mock("../../frontend/src/lib/browserStore",()=>({saveArtifact:vi.fn()}));
 import { browserChat } from "../../frontend/src/api/browserChat";
 import type { Transport } from "../../frontend/src/api/browserTransport";
 const response=(value:unknown)=>new Response(JSON.stringify(value));

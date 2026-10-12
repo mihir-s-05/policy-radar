@@ -19,10 +19,10 @@ export function useSession() {
   const selectSession = useCallback((nextSessionId: string) => {
     if (nextSessionId) {
       setSessionId(nextSessionId);
-      localStorage.setItem(SESSION_KEY, nextSessionId);
+      try{localStorage.setItem(SESSION_KEY, nextSessionId);}catch{/* The conversation itself is stored in IndexedDB. */}
     } else {
       setSessionId(null);
-      localStorage.removeItem(SESSION_KEY);
+      try{localStorage.removeItem(SESSION_KEY);}catch{/* Selection can stay in memory. */}
     }
   }, []);
 
@@ -38,11 +38,11 @@ export function useSession() {
       await deleteSession(targetId);
       if (sessionId === targetId) {
         setSessionId(null);
-        localStorage.removeItem(SESSION_KEY);
+        try{localStorage.removeItem(SESSION_KEY);}catch{/* Selection can stay in memory. */}
       }
       await refreshSessions();
     } catch (err) {
-      console.error("Failed to delete session:", err);
+      setError(err instanceof Error?err.message:"Failed to delete session");
     }
   }, [sessionId, refreshSessions]);
 
@@ -62,6 +62,12 @@ export function useSession() {
   useEffect(() => {
     initSession();
   }, [initSession]);
+
+  useEffect(()=>{
+    const changed=()=>{selectSession("");setError(null);void refreshSessions().catch(err=>setError(err instanceof Error?err.message:"Failed to refresh saved conversations"));};
+    window.addEventListener("policy-data-changed",changed);
+    return ()=>window.removeEventListener("policy-data-changed",changed);
+  },[refreshSessions,selectSession]);
 
   return {
     sessionId,

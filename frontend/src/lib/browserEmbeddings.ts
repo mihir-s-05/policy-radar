@@ -1,4 +1,5 @@
 import type { Transport } from "../api/browserTransport";
+import { localTransaction } from "./browserStore";
 
 export const LOCAL_MODEL="sentence-transformers/all-MiniLM-L6-v2";
 export const CLOUDFLARE_MODEL="@cf/baai/bge-small-en-v1.5";
@@ -54,17 +55,8 @@ export async function rank(query:number[],vectors:(number[]|Float32Array)[],topK
 }
 export interface IndexedChunk {text:string;vector:Float32Array;doc_key:string;source_url:string;pdf_url?:string}
 interface DocumentIndex {key:string;session_id:string;model:string;doc_key:string;text_hash:string;chunks:IndexedChunk[]}
-async function database():Promise<IDBDatabase> {
-  return new Promise((resolve,reject)=>{
-    const request=indexedDB.open("policy-radar-documents",1);
-    request.onupgradeneeded=()=>{const store=request.result.createObjectStore("documents",{keyPath:"key"});store.createIndex("session","session_id");};
-    request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
-  });
-}
 async function indexes(sessionId:string):Promise<DocumentIndex[]> {
-  const db=await database();
-  try{return await new Promise((resolve,reject)=>{const req=db.transaction("documents").objectStore("documents").index("session").getAll(sessionId);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
-  finally{db.close();}
+  return localTransaction<DocumentIndex[]>("documents","readonly",(tx,set)=>{const req=tx.objectStore("documents").index("session").getAll(sessionId);req.onsuccess=()=>set(req.result);});
 }
 function chunks(text:string):string[] {
   const normalized=text.replace(/\s+/g," ").trim(),output:string[]=[];
@@ -86,9 +78,7 @@ export async function indexDocument(sessionId:string,docKey:string,text:string,s
   const parts=chunks(text),vectors=await embedTexts(parts,provider,sessionId,transport,signal);
   const row:DocumentIndex={key,session_id:sessionId,model,doc_key:docKey,text_hash:hash,
     chunks:parts.map((part,i)=>({text:part,vector:new Float32Array(vectors[i]),doc_key:docKey,source_url:sourceURL,pdf_url:pdfURL}))};
-  signal?.throwIfAborted();const db=await database();
-  try{await new Promise<void>((resolve,reject)=>{const tx=db.transaction("documents","readwrite");tx.objectStore("documents").put(row);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}
-  finally{db.close();}
+  signal?.throwIfAborted();await localTransaction("documents","readwrite",tx=>{tx.objectStore("documents").put(row);});
 }
 export async function queryDocuments(sessionId:string,query:string,provider:"local"|"cloudflare",transport:Transport,topK=5,signal?:AbortSignal) {
   const model=provider==="local"?LOCAL_MODEL:CLOUDFLARE_MODEL;
@@ -99,7 +89,6 @@ export async function queryDocuments(sessionId:string,query:string,provider:"loc
   return {count:ranked.length,matches:ranked.map(({index,score})=>({text:rows[index].text,score,metadata:{doc_key:rows[index].doc_key,source_url:rows[index].source_url,pdf_url:rows[index].pdf_url}}))};
 }
 export async function deleteDocumentIndex(sessionId:string) {
-  const rows=await indexes(sessionId),db=await database();
-  try{await new Promise<void>((resolve,reject)=>{const tx=db.transaction("documents","readwrite");for(const row of rows)tx.objectStore("documents").delete(row.key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}
-  finally{db.close();}
+  const rows=await indexes(sessionId);
+  await localTransaction("documents","readwrite",tx=>{for(const row of rows)tx.objectStore("documents").delete(row.key);});
 }

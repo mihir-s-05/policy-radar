@@ -4,6 +4,7 @@ import type { Transport } from "./browserTransport";
 import { requestJSON } from "./browserTransport";
 import { indexDocument, queryDocuments,LOCAL_MODEL,CLOUDFLARE_MODEL } from "../lib/browserEmbeddings";
 import { readDocument } from "./browserDocuments";
+import { saveArtifact } from "../lib/browserStore";
 import { object,array,string,providerPayload,providerTurn,appendAssistant,appendToolResults } from "./providerProtocol";
 import type { ToolSpec,ToolCall,ObjectValue } from "./providerProtocol";
 
@@ -56,6 +57,7 @@ export async function* browserChat(request:ChatRequest,transport:Transport,signa
             try {document=await readDocument(string(result.content_url),transport,signal);}
             catch(error){signal?.throwIfAborted();if(!result.pdf_url)throw error;document=await readDocument(string(result.pdf_url),transport,signal);}
             result={...result,title:result.title||document.title,full_text:document.full_text.slice(0,20_000),truncated:document.truncated||document.full_text.length>20_000};images=document.images;
+            await saveArtifact({key:JSON.stringify([request.session_id,"document",result.content_url]),session_id:request.session_id,kind:"document",source_url:string(result.content_url),saved_at:new Date().toISOString(),data:{...document}});
             if(document.full_text.trim())try {await indexDocument(request.session_id,string(result.id)||string(result.content_url),document.full_text,string(result.content_url),embedding,transport,signal,string(result.pdf_url)||undefined);}
             catch(error){signal?.throwIfAborted();result.embedding_warning=error instanceof Error?error.message:"Document indexing failed.";}
           }
@@ -64,6 +66,7 @@ export async function* browserChat(request:ChatRequest,transport:Transport,signa
       } catch(error) {
         signal?.throwIfAborted();const message=error instanceof Error?error.message:"Research tool failed.";result={error:message};step.status="error";step.result_preview={error:message};
       }
+      await saveArtifact({key:JSON.stringify([request.session_id,"research",requestId]),session_id:request.session_id,kind:"research",data:{steps,sources}});
       yield {type:"step",data:{...step}};results.push({call,result,images});
     }
     if(turn.calls.length>12)throw new Error("The provider requested too many tools in one turn. Narrow the inquiry.");
